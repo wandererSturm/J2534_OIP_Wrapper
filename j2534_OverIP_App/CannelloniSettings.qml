@@ -24,6 +24,8 @@ Rectangle
             font.bold: true
         }
 
+        InterfaceRow {}
+
         Label
         {
             Layout.fillWidth: true

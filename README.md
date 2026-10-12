@@ -55,11 +55,17 @@ ctest --preset x64
 ```
 
 ### Registering the driver
-Registry setup is manual for now. Host applications find the DLL, and the DLL finds the App, through
-`HKLM\SOFTWARE\WOW6432Node\PassThruSupport.04.04\XplatformsPassThruOverIP` (or `PassThruSupport.05.00`):
+Start `dist\x64\bin\j2534_OverIP_App.exe` and pick an interface (Cannelloni, DLL Wrapper or Emulator). The App asks
+for administrator rights once and writes `HKLM\SOFTWARE\WOW6432Node\PassThruSupport.04.04\XplatformsPassThruOverIP`:
 
-- `FunctionLibrary`: full path to `dist\x86\j2534_OverIP.dll`
-- `ConfigApplication`: full path to `dist\x64\bin\j2534_OverIP_App.exe`, which the DLL starts if the App isn't already running
+- `ExSelectedInterface`: what the DLL does (`J2534Cannelloni`, `J2534DllWrapper`, `J2534Emulator`); `WrappedDll` for the wrapper
+- `FunctionLibrary`: full path to `dist\x86\j2534_OverIP.dll`, so host applications list the driver
+- `ConfigApplication`: full path to the App, which the DLL starts if it isn't already running
+- `Name`, `Vendor` and the `CAN`, `ISO15765`, `ISO9141` protocol flags
+
+Change the interface later with **Change…** on the Wrapper/Cannelloni settings pages or at the top of the Emulator
+view. Restart the diagnostic program afterwards: the DLL reads these values when it is loaded. The page also shows
+the equivalent `reg add` commands for manual setup.
 
 ## License
 This project is licensed under GPL-3.0.

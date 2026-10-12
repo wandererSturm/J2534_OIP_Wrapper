@@ -10,8 +10,25 @@ Item {
         ExJ2534Wrapper.exportToJSON()
     }
 
-    Label{
-        text: "SETTINGS"
+    ColumnLayout
+    {
+        anchors.fill: parent
+        anchors.margins: 16
+        spacing: 12
+
+        Label{
+            text: "SETTINGS"
+        }
+
+        InterfaceRow {}
+
+        Label
+        {
+            text: "Wrapped driver: " + (InterfaceConfig.wrappedDll === "" ? "not set" : InterfaceConfig.wrappedDll)
+            color: "#555555"
+        }
+
+        Item { Layout.fillHeight: true }
     }
 
 }
