@@ -630,13 +630,14 @@ long J2534CannelloniClient::PassThruWriteMsgs(unsigned long ChannelID, const PAS
         }
         printf("\n");
 
-        if ((srcMsg.ProtocolID != CAN && srcMsg.ProtocolID != CAN_PS) || srcMsg.DataSize < 4 || srcMsg.DataSize > 4 + MAX_CAN_FRAME_DATA_LEN)
+        const bool isCan = srcMsg.ProtocolID == CAN || srcMsg.ProtocolID == CAN_PS;
+        if (!isCan || srcMsg.DataSize < 4 || srcMsg.DataSize > 4 + MAX_CAN_FRAME_DATA_LEN)
         {
-            lastError = "Invalid CAN msg format";
+            lastError = isCan ? "Invalid CAN msg format" : "Message protocol is not CAN";
             printf("[PassThruWriteMsgs] %s\n", lastError.data());
-            lastErrorLong = J2534Err::ERR_BUFFER_OVERFLOW;
+            lastErrorLong = isCan ? J2534Err::ERR_INVALID_MSG : J2534Err::ERR_MSG_PROTOCOL_ID;
             invalidMsgError = failure(__FUNCTION__, lastError);
-            break; // Skip invalid messages
+            break; // Stop at the invalid message; the ones before it were sent
         }
 
         // Build frame
@@ -687,8 +688,10 @@ long J2534CannelloniClient::PassThruWriteMsgs(unsigned long ChannelID, const PAS
         }
     }
 
+    // On return *pNumMsgs is the number of messages actually transmitted.
     *pNumMsgs = sentMsgs;
-    lastErrorLong = (sentMsgs == *pNumMsgs) ? J2534Err::STATUS_NOERROR : J2534Err::ERR_FAILED;
+    if (invalidMsgError.empty())
+        lastErrorLong = J2534Err::STATUS_NOERROR;
 
     call.num_msgs_written = *pNumMsgs;
     msg.result(call, lastErrorLong, invalidMsgError);
