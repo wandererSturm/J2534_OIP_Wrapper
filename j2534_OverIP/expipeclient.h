@@ -5,6 +5,7 @@
 #include <string>
 #include <vector>
 #include <cn-cbor/cn-cbor.h>
+#include "pipe_message_builder.h"
 
 class ExPipeClient {
 public:
@@ -38,9 +39,13 @@ public:
     bool connect();
     void disconnect();
     void send(const Message& msg);
+    // Encodes and writes one length-prefixed j2534.pipe.PipeMessage.
+    void send(PipeMessageBuilder& message);
     Message receive();
 
 private:
+    bool writeFrame(const uint8_t* data, uint32_t size);
+
     HANDLE pipe;
     std::string name;
 };

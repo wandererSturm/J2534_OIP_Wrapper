@@ -36,7 +36,7 @@ add_library(j2534_OverIP SHARED
 # Own directory first so <cn-cbor/cn-cbor.h> resolves to the vendored header.
 target_include_directories(j2534_OverIP PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_definitions(j2534_OverIP PRIVATE J2534OVERIP_LIBRARY UNICODE _UNICODE)
-target_link_libraries(j2534_OverIP PRIVATE cn-cbor ws2_32 advapi32 kernel32)
+target_link_libraries(j2534_OverIP PRIVATE j2534_pipe_builder_static_crt cn-cbor ws2_32 advapi32 kernel32)
 
 # Loaded into third-party diagnostic tools: no Qt, no VC++ redist requirement.
 set_target_properties(j2534_OverIP PROPERTIES

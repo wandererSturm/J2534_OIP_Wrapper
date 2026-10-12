@@ -118,28 +118,40 @@ void ExPipeClient::send(const ExPipeClient::Message& msg)
         memset(cbor,0,cbor_size);
         cn_cbor_encoder_write(cbor, 0, cbor_size, cb);
 
-        // Write the message length (as a 4-byte integer) before the message
-        DWORD bytesWritten;
-        int size = static_cast<int>(cbor_size);
-        if (!WriteFile(pipe, &size, sizeof(size), &bytesWritten, nullptr) ||
-            bytesWritten != sizeof(size)) {
-            // Handle error
-            printf("Can't WRITE SIZE TO PIPE!!!!");
-            delete[] cbor;
-            return;
-        }
-
-        // Write the message
-        if (!WriteFile(pipe, cbor, cbor_size, &bytesWritten, nullptr) ||
-            bytesWritten != cbor_size) {
-            // Handle error
-            printf("Can't WRITE TO PIPE!!!!");
-        }
-
+        writeFrame(cbor, static_cast<uint32_t>(cbor_size));
         delete[] cbor;
     }
 }
 
+
+void ExPipeClient::send(PipeMessageBuilder& message)
+{
+    const auto encoded = message.encode();
+    if (encoded.empty()) {
+        printf("ExPipeClient: failed to encode pipe message\n");
+        return;
+    }
+    writeFrame(encoded.data(), static_cast<uint32_t>(encoded.size()));
+}
+
+// Frame: little-endian int32 byte length, then the payload.
+bool ExPipeClient::writeFrame(const uint8_t* data, uint32_t size)
+{
+    if (pipe == INVALID_HANDLE_VALUE)
+        return false;
+
+    DWORD bytesWritten = 0;
+    const int32_t length = static_cast<int32_t>(size);
+    if (!WriteFile(pipe, &length, sizeof(length), &bytesWritten, nullptr) || bytesWritten != sizeof(length)) {
+        printf("ExPipeClient: can't write frame length to pipe\n");
+        return false;
+    }
+    if (!WriteFile(pipe, data, size, &bytesWritten, nullptr) || bytesWritten != size) {
+        printf("ExPipeClient: can't write frame to pipe\n");
+        return false;
+    }
+    return true;
+}
 
 ExPipeClient::Message ExPipeClient::receive()
 {
