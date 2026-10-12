@@ -1,7 +1,5 @@
 #include <Windows.h>
 #include "ExDbg.h"
-#include "j2534.h"
-#include "exj2534oipsocks.h"
 #include "j2534dllwrapper.h"
 #include "j2534simplelogger.h"
 #include "j2534emulator.h"
@@ -11,9 +9,10 @@
 void init_console()
 {
   AllocConsole();
-  freopen("CONIN$", "r", stdin);
-  freopen("CONOUT$", "w", stdout);
-  freopen("CONOUT$", "w", stderr);
+  FILE* stream = nullptr;
+  freopen_s(&stream, "CONIN$", "r", stdin);
+  freopen_s(&stream, "CONOUT$", "w", stdout);
+  freopen_s(&stream, "CONOUT$", "w", stderr);
 }
 
 
