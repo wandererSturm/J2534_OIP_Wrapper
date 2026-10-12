@@ -1,5 +1,4 @@
 add_library(j2534_OverIP SHARED
-    cbor_utils.cpp
     exj2534device.cpp
     exj2534oipsocks.cpp
     expipeclient.cpp
@@ -15,7 +14,6 @@ add_library(j2534_OverIP SHARED
     Exj2534WrapperInterface.h
     PassThruSpecial.h
     PassThruStruct.h
-    cbor_utils.h
     exj2534device.h
     exj2534oipsocks.h
     expipeclient.h
@@ -33,10 +31,9 @@ add_library(j2534_OverIP SHARED
 
     exports.def)
 
-# Own directory first so <cn-cbor/cn-cbor.h> resolves to the vendored header.
 target_include_directories(j2534_OverIP PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_compile_definitions(j2534_OverIP PRIVATE J2534OVERIP_LIBRARY UNICODE _UNICODE)
-target_link_libraries(j2534_OverIP PRIVATE j2534_pipe_builder_static_crt cn-cbor ws2_32 advapi32 kernel32)
+target_link_libraries(j2534_OverIP PRIVATE j2534_pipe_builder_static_crt ws2_32 advapi32 kernel32)
 
 # Loaded into third-party diagnostic tools: no Qt, no VC++ redist requirement.
 set_target_properties(j2534_OverIP PROPERTIES

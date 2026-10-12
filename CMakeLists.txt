@@ -37,7 +37,6 @@ endif()
 add_subdirectory(proto)
 
 if(J2534_BUILD_DLL)
-    include(CnCbor)
     add_subdirectory(j2534_OverIP)
 endif()
 

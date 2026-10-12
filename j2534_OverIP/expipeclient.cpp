@@ -1,5 +1,4 @@
 #include "ExPipeClient.h"
-#include <cn-cbor/cn-cbor.h>
 #include <future>
 #include <chrono>
 
@@ -98,32 +97,6 @@ void ExPipeClient::disconnect() {
     }
 }
 
-void ExPipeClient::send(const ExPipeClient::Message& msg)
-{
-    cn_cbor_errback cn_errback = {0};
-    cn_cbor* cb = cn_cbor_map_create(&cn_errback);
-
-    cn_cbor_map_put(cb, cn_cbor_string_create("id", &cn_errback), cn_cbor_int_create(msg.id, &cn_errback), &cn_errback);
-    cn_cbor_map_put(cb, cn_cbor_string_create("type", &cn_errback), cn_cbor_int_create(msg.type, &cn_errback), &cn_errback);
-    cn_cbor_map_put(cb, cn_cbor_string_create("data_type", &cn_errback), cn_cbor_int_create(msg.data_type, &cn_errback), &cn_errback);
-    cn_cbor_map_put(cb, cn_cbor_string_create("timestamp", &cn_errback), cn_cbor_int_create(msg.timestamp, &cn_errback), &cn_errback);
-    cn_cbor_map_put(cb, cn_cbor_string_create("path", &cn_errback), cn_cbor_string_create(msg.path.c_str(), &cn_errback), &cn_errback);
-    cn_cbor_map_put(cb, cn_cbor_string_create("message", &cn_errback), cn_cbor_string_create(msg.message.c_str(), &cn_errback), &cn_errback);
-    cn_cbor_map_put(cb, cn_cbor_string_create("data", &cn_errback), cn_cbor_data_create(reinterpret_cast<const uint8_t*>(msg.data.data()), msg.data.size(), &cn_errback), &cn_errback);
-
-    auto cbor_size = cn_cbor_encoder_write(nullptr, 0, 0, cb);
-    if(cbor_size != -1)
-    {
-        uint8_t * cbor = new uint8_t[cbor_size];
-        memset(cbor,0,cbor_size);
-        cn_cbor_encoder_write(cbor, 0, cbor_size, cb);
-
-        writeFrame(cbor, static_cast<uint32_t>(cbor_size));
-        delete[] cbor;
-    }
-}
-
-
 void ExPipeClient::send(PipeMessageBuilder& message)
 {
     const auto encoded = message.encode();
@@ -152,57 +125,3 @@ bool ExPipeClient::writeFrame(const uint8_t* data, uint32_t size)
     }
     return true;
 }
-
-ExPipeClient::Message ExPipeClient::receive()
-{
-    DWORD bytesRead;
-    DWORD bytesAvailable;
-
-    // Check how many bytes are available to be read
-    if (!PeekNamedPipe(pipe, NULL, 0, NULL, &bytesAvailable, NULL)) {
-        // Handle error
-    }
-
-    // If not enough bytes are available to read the size of the message, return an empty message
-    if (bytesAvailable < sizeof(int)) {
-        return ExPipeClient::Message{};
-    }
-
-    int size;
-    if (!ReadFile(pipe, &size, sizeof(size), &bytesRead, nullptr) || bytesRead != sizeof(size))
-    {
-        // Handle error
-    }
-
-    // Check again how many bytes are available to be read
-    if (!PeekNamedPipe(pipe, NULL, 0, NULL, &bytesAvailable, NULL))
-    {
-        // Handle error
-    }
-
-    // If not enough bytes are available to read the message, return an empty message
-    if (bytesAvailable < size)
-    {
-        return ExPipeClient::Message{};
-    }
-
-    std::vector<char> buffer(size);
-    if (!ReadFile(pipe, buffer.data(), size, &bytesRead, nullptr) || bytesRead != size)
-    {
-        // Handle error
-    }
-
-    cn_cbor_errback errp;
-    cn_cbor* cb = cn_cbor_decode((const uint8_t*)buffer.data(), bytesRead, &errp);
-    ExPipeClient::Message msg;
-    msg.path = cn_cbor_mapget_string(cb, "path")->v.str;
-    msg.id = cn_cbor_mapget_string(cb, "id")->v.sint;
-    msg.type = cn_cbor_mapget_string(cb, "type")->v.sint;
-    msg.message = cn_cbor_mapget_string(cb, "message")->v.str;
-    cn_cbor* data_cb = cn_cbor_mapget_string(cb, "data");
-    msg.data = std::vector<uint8_t>(data_cb->v.str, data_cb->v.str + data_cb->length);
-
-    return msg;
-}
-
-

@@ -70,21 +70,26 @@ public:
     // Overload operator<< to handle the end marker
     ExDbg& operator<<(const ExDbgEndMarker&) {
         // If the end marker is detected, send the buffered message
-        _pipe_client->send({this->_crc32_id, this->_type_id, 0, 0, this->_client_path, buffer_.str(), {} });
+        sendBuffer();
         buffer_.str("");  // Clear the buffer
         return *this;
     }
 
     ~ExDbg() {
         if (!buffer_.str().empty()) {
-            const std::string crc32_dat = getProcessPath();
             // If there is any data left in the buffer when the object is destroyed, send it
-            _pipe_client->send({this->_crc32_id, this->_type_id, 0, 0, this->_client_path, buffer_.str(), {} });
+            sendBuffer();
         }
         _pipe_client->disconnect();
     }
 
 private:
+    // Log lines are text-only pipe messages without a module.
+    void sendBuffer() {
+        PipeMessageBuilder msg(j2534_pipe_Module_MODULE_UNSPECIFIED, this->_crc32_id, this->_client_path, buffer_.str());
+        _pipe_client->send(msg);
+    }
+
     ExDbg();
     ExDbg(const ExDbg&) = delete;
     ExDbg& operator=(const ExDbg&) = delete;
@@ -96,7 +101,6 @@ private:
 
     std::string     _client_path;
     uint32_t            _crc32_id;
-    const uint32_t      _type_id = 0; //0 = Logging
 
 
     ExPipeClient * _pipe_client;
