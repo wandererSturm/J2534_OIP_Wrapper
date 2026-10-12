@@ -21,6 +21,8 @@ option(J2534_BUILD_DLL "Build the PassThru DLL" ON)
 option(J2534_BUILD_APP "Build the Qt configuration/monitor application" ON)
 option(J2534_BUILD_TESTS "Build the pipe protocol tests (needs Qt)" ${J2534_BUILD_APP})
 
+enable_testing()
+
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
 include(Protoc)
 
@@ -38,6 +40,7 @@ add_subdirectory(proto)
 
 if(J2534_BUILD_DLL)
     add_subdirectory(j2534_OverIP)
+    add_subdirectory(j2534_device_host)
 endif()
 
 if(J2534_BUILD_APP)
@@ -45,6 +48,5 @@ if(J2534_BUILD_APP)
 endif()
 
 if(J2534_BUILD_TESTS)
-    enable_testing()
     add_subdirectory(tests)
 endif()
