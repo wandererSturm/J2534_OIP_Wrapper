@@ -9,7 +9,7 @@ qt_add_qml_module(j2534_OverIP_App
     QML_FILES
         Main.qml
         MainPage.qml
-        TestPage.qml
+        NoInterfacePage.qml
         ExIconButton.qml
         J2534Emulator.qml
         J2534Wrapper.qml
