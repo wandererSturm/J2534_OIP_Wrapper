@@ -146,10 +146,13 @@ private:
     long lastErrorLong = 0;
 
 private:
+    PipeMessageBuilder message(std::string text = {});
+    // Not `send`: that would hide Winsock's send() inside member functions.
+    void sendPipe(PipeMessageBuilder& message);
+    long vendorNotImplemented(j2534_pipe_VendorFunction function, const char* name);
+
     ExPipeClient *          _p_pipe;
     std::string             p_path;
     uint32_t                p_id;
-    uint32_t                p_type;
-    uint32_t                p_data_type;
 };
 #endif // J2534CANNELLONICLIENT_H
