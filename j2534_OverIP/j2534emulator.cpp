@@ -133,7 +133,7 @@ long J2534Emulator::PassThruReadMsgs(unsigned long ChannelID, PASSTHRU_MSG *pMsg
     {
         for(int i = 0; i < *pNumMsgs; i++)
         {
-            printf("[READMSG] protid %08x rxstatus %08x txflags %08x tstamp %d e_index %08x datasize %d \n [MSG]: ",
+            printf("[READMSG] protid %08lx rxstatus %08lx txflags %08lx tstamp %lu e_index %08lx datasize %lu\n [MSG]: ",
                    pMsg[i].ProtocolID, pMsg[i].RxStatus, pMsg[i].TxFlags,
                    pMsg[i].Timestamp, pMsg[i].ExtraDataIndex, pMsg[i].DataSize);
             for(int y = 0; y < pMsg[i].DataSize; y++)
@@ -161,7 +161,7 @@ long J2534Emulator::PassThruQueueMsgs(unsigned long ChannelID, PASSTHRU_MSG *pMs
 {
     for(int i = 0; i < *pNumMsgs; i++)
     {
-        printf("[QUEUEMSG] protid %08x rxstatus %08x txflags %08x tstamp %d e_index %08x datasize %d \n [MSG]: ",
+        printf("[QUEUEMSG] protid %08lx rxstatus %08lx txflags %08lx tstamp %lu e_index %08lx datasize %lu\n [MSG]: ",
                pMsg[i].ProtocolID, pMsg[i].RxStatus, pMsg[i].TxFlags,
                pMsg[i].Timestamp, pMsg[i].ExtraDataIndex, pMsg[i].DataSize);
         for(int y = 0; y < pMsg[i].DataSize; y++)
@@ -186,7 +186,7 @@ long J2534Emulator::PassThruWriteMsgs(unsigned long ChannelID, const PASSTHRU_MS
 {
     for(int i = 0; i < *pNumMsgs; i++)
     {
-        printf("[WRITEMSG] protid %08x rxstatus %08x txflags %08x tstamp %d e_index %08x datasize %d \n [MSG]: ",
+        printf("[WRITEMSG] protid %08lx rxstatus %08lx txflags %08lx tstamp %lu e_index %08lx datasize %lu\n [MSG]: ",
                pMsg[i].ProtocolID, pMsg[i].RxStatus, pMsg[i].TxFlags,
                pMsg[i].Timestamp, pMsg[i].ExtraDataIndex, pMsg[i].DataSize);
         for(int y = 0; y < pMsg[i].DataSize; y++)
@@ -236,7 +236,7 @@ long J2534Emulator::PassThruSetProgrammingVoltage(unsigned long DeviceID, unsign
 {
     log("J2534Emulator PassThruSetProgrammingVoltage called!");
 
-    printf(" [PassThruSetProgrammingVoltage] Device %d PIN = %d  Voltage = %d Voltage = %08x\n", DeviceID, Pin, Voltage, Voltage);
+    printf(" [PassThruSetProgrammingVoltage] Device %lu PIN = %lu  Voltage = %lu Voltage = %08lx\n", DeviceID, Pin, Voltage, Voltage);
 
     return STATUS_NOERROR;
 }
@@ -269,7 +269,8 @@ long J2534Emulator::PassThruGetLastError(char *pErrorDescription)
 {
     if(pErrorDescription == NULL)
     {
-        pErrorDescription = new char[2048];
+        log("PassThruGetLastError NULLPARAM");
+        return ERR_NULL_PARAMETER;
     }
     sprintf(pErrorDescription, "%s", "NOT SUPPORTED");
 
@@ -287,7 +288,7 @@ long J2534Emulator::PassThruIoctl(unsigned long ChannelID, unsigned long IoctlID
     // TODO: check IoctlID?
     // 3 READ_VBATT?
     // 2 CONFIG_SET?
-    printf("PassThruIoctl Channel or Device %d IoctlID = %08x\n", ChannelID, IoctlID);
+    printf("PassThruIoctl Channel or Device %lu IoctlID = %08lx\n", ChannelID, IoctlID);
     if (IoctlID == READ_VBATT)
     {
         //unsigned int voltageLevel = 14400;
@@ -305,10 +306,10 @@ long J2534Emulator::PassThruIoctl(unsigned long ChannelID, unsigned long IoctlID
         else
         {
             const SCONFIG_LIST * input = reinterpret_cast<const SCONFIG_LIST *>(pInput);
-            printf("SCONFIG_LIST NumOfParams %d\n", input->NumOfParams);
+            printf("SCONFIG_LIST NumOfParams %lu\n", input->NumOfParams);
             for(int i = 0; i < input->NumOfParams; i++)
             {
-                printf("ConfigPtr %d paramter %08x value %08x \n", i, input->ConfigPtr[i].Parameter, input->ConfigPtr[i].Value);
+                printf("ConfigPtr %d paramter %08lx value %08lx \n", i, input->ConfigPtr[i].Parameter, input->ConfigPtr[i].Value);
             }
         }
     }
@@ -440,12 +441,8 @@ long J2534Emulator::PassThruGetNextCarDAQ(char **name, unsigned long *version, c
         memset(pAddr, 0, 128);
         sprintf(pAddr, "%d.%d.%d.%d", 192, 168, 155, 100);
 
-        unsigned long ver = 0xFFFFFF;
-        unsigned long *pVersion = (unsigned long*)malloc(sizeof(unsigned long));
-        memcpy(pVersion, &ver, sizeof(unsigned long));
-
         *name = pName;
-        version = pVersion;
+        *version = 0xFFFFFF;
         *addr = pAddr;
 
         _dev_counter++;

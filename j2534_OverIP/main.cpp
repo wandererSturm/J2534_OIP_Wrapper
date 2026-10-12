@@ -95,7 +95,7 @@ BOOL WINAPI DllMain(HINSTANCE hInstDll, DWORD dwReason, LPVOID lpvReserved) {
       char lpFilename[52600] = {0};
       GetModuleFileNameA((HMODULE)hInstDll, (LPSTR)&lpFilename, 52600 );
       {
-          printf("LoadModule: %08x %s\n",lpvReserved, lpFilename);
+          printf("LoadModule: %p %s\n",lpvReserved, lpFilename);
       }
 
       uint32_t pid = GetCurrentProcessId();

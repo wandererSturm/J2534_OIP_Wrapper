@@ -9,7 +9,6 @@
 #include <windows.h>
 #include <thread>
 #include <mutex>
-#include <unordered_map>
 #include <atomic>
 #include <cstring>
 #include <chrono>
@@ -238,7 +237,7 @@ void J2534CannelloniClient::startReceiveThread(ChannelContext& ctx)
                             std::copy_n(reinterpret_cast<uint8_t*>(&canId) + 1, 3, msg.Data + 1);
                             std::copy_n(f.data, f.length, msg.Data + 4);
 
-                            printf("[GOT FRAME] protid %08x rxstatus %08x txflags %08x tstamp %d e_index %08x datasize %d \n [MSG]: ",
+                            printf("[GOT FRAME] protid %08lx rxstatus %08lx txflags %08lx tstamp %lu e_index %08lx datasize %lu\n [MSG]: ",
                                    msg.ProtocolID,msg.RxStatus, msg.TxFlags,
                                    msg.Timestamp, msg.ExtraDataIndex, msg.DataSize);
                             for(int y = 0; y < msg.DataSize; y++)
@@ -277,7 +276,7 @@ long J2534CannelloniClient::PassThruOpen(const void* pName, unsigned long* pDevi
 {
     std::lock_guard<std::mutex> lock(globalMutex);
 
-    if(pName != nullptr)printf("[PassThruOpen] %s\n", pName);
+    if(pName != nullptr)printf("[PassThruOpen] %s\n", static_cast<const char*>(pName));
 
     auto msg = message("PassThruOpen");
     auto& call = msg.select(j2534_pipe_PipeMessage_open_tag, msg.msg().payload.open);
@@ -324,7 +323,7 @@ long J2534CannelloniClient::PassThruOpen(const void* pName, unsigned long* pDevi
     auto candidate = channelMap.find(port);
     if(candidate != channelMap.end())
     {
-        printf("ChannelMap already contains port %d\n", port);
+        printf("ChannelMap already contains port %lu\n", port);
         lastError = "No free ports";
         lastErrorLong = J2534Err::ERR_DEVICE_IN_USE;
 
@@ -446,7 +445,7 @@ long J2534CannelloniClient::PassThruClose(unsigned long DeviceID)
 long J2534CannelloniClient::PassThruConnect(unsigned long DeviceID, unsigned long ProtocolID, unsigned long Flags, unsigned long Baudrate, unsigned long* pChannelID) {
     std::lock_guard<std::mutex> lock(globalMutex);
 
-    printf("[PassThruConnect] devID: %d ProtID: %d Flags: %d Baud: %d\n", DeviceID, ProtocolID, Flags, Baudrate);
+    printf("[PassThruConnect] devID: %lu ProtID: %lu Flags: %lu Baud: %lu\n", DeviceID, ProtocolID, Flags, Baudrate);
 
     auto msg = message("PassThruConnect");
     auto& call = msg.select(j2534_pipe_PipeMessage_connect_tag, msg.msg().payload.connect);
@@ -514,7 +513,7 @@ long J2534CannelloniClient::PassThruReadMsgs(unsigned long ChannelID, PASSTHRU_M
         lastError = "Invalid ChannelID";
         lastErrorLong = J2534Err::ERR_INVALID_CHANNEL_ID;
 
-        printf("[PassThruReadMsgs] Invalid ChannelID %d\n", ChannelID);
+        printf("[PassThruReadMsgs] Invalid ChannelID %lu\n", ChannelID);
 
         msg.result(call, lastErrorLong, failure(__FUNCTION__, lastError));
         sendPipe(msg);
@@ -552,7 +551,7 @@ long J2534CannelloniClient::PassThruReadMsgs(unsigned long ChannelID, PASSTHRU_M
                                              std::chrono::steady_clock::now() - startTime).count();
             if (timeoutLeft <= 0)
             {
-                printf("[PassThruReadMsgs] timeout %d \n", Timeout);
+                printf("[PassThruReadMsgs] timeout %lu \n", Timeout);
                 break;
             }
 
@@ -621,7 +620,7 @@ long J2534CannelloniClient::PassThruWriteMsgs(unsigned long ChannelID, const PAS
     {
         const auto& srcMsg = pMsg[i];
 
-        printf("[WRITEMSG] protid %08x rxstatus %08x txflags %08x tstamp %d e_index %08x datasize %d \n [MSG]: ",
+        printf("[WRITEMSG] protid %08lx rxstatus %08lx txflags %08lx tstamp %lu e_index %08lx datasize %lu\n [MSG]: ",
                srcMsg.ProtocolID,srcMsg.RxStatus, srcMsg.TxFlags,
                srcMsg.Timestamp, srcMsg.ExtraDataIndex, srcMsg.DataSize);
         for(int y = 0; y < srcMsg.DataSize; y++)
@@ -826,8 +825,7 @@ long J2534CannelloniClient::PassThruGetLastError(char* pErrorDescription)
     }
 
     // Fill buffer with lastError string (up to 80 chars, null-terminated)
-    std::strncpy(pErrorDescription, lastError.c_str(), 79);
-    pErrorDescription[79] = '\0';
+    strncpy_s(pErrorDescription, 80, lastError.c_str(), _TRUNCATE);
 
     // Return lastErrorLong (0 for no error, else J2534 error code)
     long retval = (lastErrorLong == 0) ? J2534Err::STATUS_NOERROR : lastErrorLong;
@@ -854,7 +852,7 @@ long J2534CannelloniClient::PassThruIoctl(unsigned long ChannelID, unsigned long
     // TODO: check IoctlID?
     // 3 READ_VBATT?
     // 2 CONFIG_SET?
-    printf("PassThruIoctl Channel or Device %d IoctlID = %08x\n", ChannelID, IoctlID);
+    printf("PassThruIoctl Channel or Device %lu IoctlID = %08lx\n", ChannelID, IoctlID);
 
     if (IoctlID == READ_VBATT)
     {
@@ -897,10 +895,10 @@ long J2534CannelloniClient::PassThruIoctl(unsigned long ChannelID, unsigned long
         else
         {
             const SCONFIG_LIST * input = reinterpret_cast<const SCONFIG_LIST *>(pInput);
-            printf("SCONFIG_LIST NumOfParams %d\n", input->NumOfParams);
+            printf("SCONFIG_LIST NumOfParams %lu\n", input->NumOfParams);
             for(int i = 0; i < input->NumOfParams; i++)
             {
-                printf("ConfigPtr %d paramter %08x value %08x \n", i, input->ConfigPtr[i].Parameter, input->ConfigPtr[i].Value);
+                printf("ConfigPtr %d paramter %08lx value %08lx \n", i, input->ConfigPtr[i].Parameter, input->ConfigPtr[i].Value);
             }
         }
     }
@@ -908,7 +906,7 @@ long J2534CannelloniClient::PassThruIoctl(unsigned long ChannelID, unsigned long
     {
         auto param_list = (SPARAM_LIST*)pOutput;
 
-        printf("[GET_DEVICE_INFO] SPARAM_LIST NumOfParameters %d\n", param_list->NumOfParameters);
+        printf("[GET_DEVICE_INFO] SPARAM_LIST NumOfParameters %lu\n", param_list->NumOfParameters);
         for(int i = 0; i < param_list->NumOfParameters; i++)
         {
             printf("SParamPtr %d paramter %08x value %08x supported %08x \n", i, param_list->SParamPtr[i].Parameter, param_list->SParamPtr[i].Value, param_list->SParamPtr[i].Supported);
@@ -944,10 +942,10 @@ long J2534CannelloniClient::PassThruIoctl(unsigned long ChannelID, unsigned long
         else
         {
             const SCONFIG_LIST * input = reinterpret_cast<const SCONFIG_LIST *>(pInput);
-            printf("GET_CONFIG NumOfParams %d\n", input->NumOfParams);
+            printf("GET_CONFIG NumOfParams %lu\n", input->NumOfParams);
             for(int i = 0; i < input->NumOfParams; i++)
             {
-                printf("ConfigPtr %d paramter %08x value %08x \n", i, input->ConfigPtr[i].Parameter, input->ConfigPtr[i].Value);
+                printf("ConfigPtr %d paramter %08lx value %08lx \n", i, input->ConfigPtr[i].Parameter, input->ConfigPtr[i].Value);
                 switch(input->ConfigPtr[i].Parameter)
                 {
                 case ConfigParamId::DATA_RATE:
@@ -1152,8 +1150,7 @@ long J2534CannelloniClient::PassThruGetNextCarDAQ(char **name, unsigned long *ve
         return J2534Err::ERR_NULLPARAMETER;
     }
     //std::strcpy_s(*name, nameLen, deviceName.c_str());
-    std::strncpy(*name, deviceNameStr.c_str(), nameLen - 1);
-    (*name)[nameLen - 1] = '\0';
+    strncpy_s(*name, nameLen, deviceNameStr.c_str(), _TRUNCATE);
 
     // Version: Unsigned long, e.g., 100 for 1.00
     *version = 100UL;  // Or tie to DLL version; could be 10404 for API 04.04
@@ -1172,8 +1169,7 @@ long J2534CannelloniClient::PassThruGetNextCarDAQ(char **name, unsigned long *ve
         return J2534Err::ERR_NULLPARAMETER;
     }
     //std::strcpy_s(*addr, addrLen, deviceAddr.c_str());
-    std::strncpy(*addr, deviceAddr.c_str(), addrLen - 1);
-    (*addr)[addrLen - 1] = '\0';
+    strncpy_s(*addr, addrLen, deviceAddr.c_str(), _TRUNCATE);
 
     ++scanIndex;
 
@@ -1236,8 +1232,7 @@ long J2534CannelloniClient::PassThruGetNextDevice(SDEVICE* psDevice) {
     bool isOpen = (channelMap.find(port) != channelMap.end());
     std::array<char, 80> name{};  // Modern fixed buffer
     std::snprintf(name.data(), name.size(), "Cannelloni UDP Port %lu (CAN)", port);
-    std::strncpy(psDevice->DeviceName, name.data(), sizeof(psDevice->DeviceName) - 1);
-    psDevice->DeviceName[sizeof(psDevice->DeviceName) - 1] = '\0';
+    strncpy_s(psDevice->DeviceName, sizeof(psDevice->DeviceName), name.data(), _TRUNCATE);
 
     psDevice->DeviceAvailable = isOpen ? 0UL : 1UL;  // 1 = free to open
     psDevice->DeviceDLLFWStatus = 0UL;  // Compatible
