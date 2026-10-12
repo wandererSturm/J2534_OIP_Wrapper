@@ -37,8 +37,8 @@ int main(int argc, char *argv[])
     if(sel_interface.compare(QLatin1StringView("J2534Emulator"), Qt::CaseInsensitive) == 0)module = 3;
     if(sel_interface.compare(QLatin1StringView("J2534Cannelloni"), Qt::CaseInsensitive) == 0)module = 4;
 
-    QQmlApplicationEngine engine;    
-    engine.rootContext()->setContextProperty(QLatin1StringView("ExSelectedInterface"), QVariant(module));
+    QQmlApplicationEngine engine;
+    engine.rootContext()->setContextProperty(QString("ExSelectedInterface"), QVariant(module));
 
     QObject::connect(&engine, &QQmlApplicationEngine::objectCreationFailed,
         &app, []() { QCoreApplication::exit(-1); },
