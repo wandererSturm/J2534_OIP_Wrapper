@@ -1,0 +1,30 @@
+cmake_minimum_required(VERSION 3.21)
+
+project(J2534_OIP_Wrapper
+    VERSION 1.0
+    DESCRIPTION "J2534 PassThru driver emulation and Over-IP wrapper"
+    LANGUAGES C CXX)
+
+if(NOT WIN32)
+    message(FATAL_ERROR "J2534_OIP_Wrapper is Windows-only")
+endif()
+
+set(CMAKE_CXX_STANDARD 23)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+
+# The PassThru DLL is Qt-free and built for x86 (J2534 host apps are 32-bit).
+# The Qt App is built for x64; it talks to the DLL over a named pipe.
+# See CMakePresets.json: preset "x86" builds the DLL, preset "x64" builds the App.
+option(J2534_BUILD_DLL "Build the PassThru DLL" ON)
+option(J2534_BUILD_APP "Build the Qt configuration/monitor application" ON)
+
+if(J2534_BUILD_DLL)
+    list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+    include(CnCbor)
+    add_subdirectory(j2534_OverIP)
+endif()
+
+if(J2534_BUILD_APP)
+    add_subdirectory(j2534_OverIP_App)
+endif()
