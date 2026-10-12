@@ -126,9 +126,10 @@ private:
     static constexpr unsigned long VIRTUAL_DEVICE_COUNT = 3;
     static constexpr unsigned long BASE_PORT = 20000;
 
-    std::string         defaultHost;
-    unsigned long       defaultPort;
-    uint8_t             cannelloniVersion;
+    // Used when the registry key or value is missing (see getDefaults()).
+    std::string         defaultHost = "127.0.0.1";
+    unsigned long       defaultPort = 20000;
+    uint8_t             cannelloniVersion = 1;
 
     // Helper to get virtual device port from index
     static unsigned long getPortFromIndex(int index) {

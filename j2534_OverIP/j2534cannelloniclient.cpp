@@ -122,12 +122,12 @@ long J2534CannelloniClient::getDefaults()
         DWORD hpSize = sizeof(host);
         if (RegQueryValueExA(hKey, "DefaultHost", NULL, NULL, (LPBYTE)host, &hpSize) == ERROR_SUCCESS)
         {
-            this->defaultHost.append(host);
+            this->defaultHost = host;
             retc++;
         }
         else
         {
-            this->defaultHost.append("127.0.0.1");
+            this->defaultHost = "127.0.0.1";
         }
         if(RegQueryValueExA(hKey,"DefaultPort", NULL, &type, (LPBYTE)&port, &portSize) == ERROR_SUCCESS)
         {

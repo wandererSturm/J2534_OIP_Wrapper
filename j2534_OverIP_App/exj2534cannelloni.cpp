@@ -4,6 +4,8 @@
 #include <QTimer>
 #include <QDateTime>
 #include <QGuiApplication>
+#include <QDir>
+#include <QSettings>
 
 ExJ2534Cannelloni::ExJ2534Cannelloni(QObject * parent):QAbstractListModel(parent)
 {
@@ -89,7 +91,7 @@ void ExJ2534Cannelloni::processPipeMessage(PipeMessage msg)
 }
 
 
-void ExJ2534Cannelloni::exportToJSON()
+QString ExJ2534Cannelloni::exportToJSON()
 {
     QList<PipeMessage> messages;
     for(auto it: this->p_objs)messages.append(it->msg);
@@ -99,7 +101,40 @@ void ExJ2534Cannelloni::exportToJSON()
     if(!PipeCapture::save(path, messages, &error))
     {
         qWarning() << "[ExJ2534Cannelloni] export failed:" << error;
+        return {};
     }
+    return QDir::toNativeSeparators(path);
+}
+
+// Same key and defaults as J2534CannelloniClient::getDefaults() in the DLL.
+QString ExJ2534Cannelloni::settingsLocation() const
+{
+    return QStringLiteral("HKEY_LOCAL_MACHINE\\SOFTWARE\\WOW6432Node\\PassThruSupport.04.04\\XplatformsPassThruOverIP");
+}
+
+bool ExJ2534Cannelloni::settingsFound() const
+{
+    QSettings s(settingsLocation(), QSettings::NativeFormat);
+    return s.contains(QStringLiteral("DefaultHost")) || s.contains(QStringLiteral("DefaultPort"))
+        || s.contains(QStringLiteral("CannelloniDataVersion"));
+}
+
+QString ExJ2534Cannelloni::defaultHost() const
+{
+    QSettings s(settingsLocation(), QSettings::NativeFormat);
+    return s.value(QStringLiteral("DefaultHost"), QStringLiteral("127.0.0.1")).toString();
+}
+
+int ExJ2534Cannelloni::defaultPort() const
+{
+    QSettings s(settingsLocation(), QSettings::NativeFormat);
+    return s.value(QStringLiteral("DefaultPort"), 20000).toInt();
+}
+
+int ExJ2534Cannelloni::dataVersion() const
+{
+    QSettings s(settingsLocation(), QSettings::NativeFormat);
+    return s.value(QStringLiteral("CannelloniDataVersion"), 1).toInt();
 }
 
 bool ExJ2534Cannelloni::loadFromJSON(QString fpath)
