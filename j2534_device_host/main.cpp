@@ -6,6 +6,9 @@
 //
 //   j2534_device_host.exe --pipe \\.\pipe\<name> --driver C:\path\driver.dll
 //
+// The first frame the host sends is a Response with id 0: status 0 when the
+// driver is loaded and calls can be made, otherwise the error.
+//
 // Exit codes: 0 link closed normally, 2 bad arguments, 3 driver not loadable,
 // 4 couldn't connect to the pipe.
 
@@ -84,6 +87,14 @@ int wmain(int argc, wchar_t *argv[])
         sendFrame(pipe, *frame);
         CloseHandle(pipe);
         return 3;
+    }
+
+    // Ready: a Response with id 0 and status 0. (On a load failure above, the
+    // id-0 response carries the error instead.)
+    {
+        auto ready = remote::newFrame();
+        ready->which_kind = j2534_remote_Frame_response_tag;
+        sendFrame(pipe, *ready);
     }
 
     timeBeginPeriod(1);   // 1 ms Sleep granularity for the poll loop

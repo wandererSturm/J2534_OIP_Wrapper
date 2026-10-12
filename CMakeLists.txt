@@ -32,13 +32,14 @@ endif()
 
 if(J2534_BUILD_APP OR J2534_BUILD_TESTS)
     find_package(Qt6 6.8 REQUIRED COMPONENTS
-        Core Gui Quick QuickControls2 Widgets Network Protobuf ProtobufTools Test)
+        Core Gui Quick QuickControls2 Widgets Network WebSockets Protobuf ProtobufTools Test)
     qt_standard_project_setup(REQUIRES 6.8)
 endif()
 
 add_subdirectory(proto)
 
 if(J2534_BUILD_DLL)
+    add_subdirectory(j2534_remote_client)
     add_subdirectory(j2534_OverIP)
     add_subdirectory(j2534_device_host)
 endif()
