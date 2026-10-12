@@ -3,9 +3,9 @@
 #include "types.h"
 
 #include <QDateTime>
-#include <QCborValue>
-#include <QCborMap>
-#include <QCborArray>
+
+#include <algorithm>
+#include <cstring>
 
 ExJ2534ReadMsgsList::ExJ2534ReadMsgsList(QObject *parent)
     : QAbstractListModel{parent}
@@ -67,82 +67,37 @@ QVariant ExJ2534ReadMsgsList::data(const QModelIndex & index, int role) const
 }
 
 
-/*
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_FuncName , ExPipeClient::KEY_PassThruReadMsgs);
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_Param1 , ChannelID);
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_Param2, 0);
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_Param3, *pNumMsgs);
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_Param4, Timeout);
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_RX_TX, 0);
-
-    if (this->m_PassThruReadMsgs) {
-        retval = this->m_PassThruReadMsgs(ChannelID, pMsg, pNumMsgs, Timeout);
-        cbor_utils::map_put_PASSTHRU_MSG(cb_map_root, ExPipeClient::KEY_Param2, *pNumMsgs, pMsg);
-        cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_Param3, *pNumMsgs);
-        cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_Param4, Timeout);
-        cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_RX_TX, 1);
-        cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_RETVAL_LONG, retval);
-    } else {
-        EXDBG_LOG << "Function " << __FUNCTION__ << " not found in DLL." << EXDBG_END;
-        cbor_utils::map_put_string(cb_map_root, ExPipeClient::KEY_Error, std::string("Function ").append(__FUNCTION__).append(" not found in DLL.").c_str());
-    }
-
-        cn_cbor* cb_map_elem = cn_cbor_map_create(&cn_errback);
-        cbor_utils::map_put_int(cb_map_elem, ExPipeClient::KEY_Param1, msgs[i].ProtocolID);
-        cbor_utils::map_put_int(cb_map_elem, ExPipeClient::KEY_Param2, msgs[i].RxStatus);
-        cbor_utils::map_put_int(cb_map_elem, ExPipeClient::KEY_Param3, msgs[i].TxFlags);
-        cbor_utils::map_put_int(cb_map_elem, ExPipeClient::KEY_Param4, msgs[i].Timestamp);
-        cbor_utils::map_put_int(cb_map_elem, ExPipeClient::KEY_Param5, msgs[i].DataSize);
-        cbor_utils::map_put_int(cb_map_elem, ExPipeClient::KEY_Param6, msgs[i].ExtraDataIndex);
-        cbor_utils::map_put_data(cb_map_elem, ExPipeClient::KEY_Param7, msgs[i].Data, msgs[i].DataSize);
-        cbor_utils::arr_append_cbor(cb_array, cb_map_elem);
-*/
-
 void ExJ2534ReadMsgsList::processPipeMessage(PipeMessage msg)
 {
-    if(msg.timestamp == 0)msg.timestamp = QDateTime::currentDateTime().toSecsSinceEpoch();
-    auto cbor_data = QCborValue::fromCbor(msg.data).toMap();
-    //auto obj = new TimestampedObject{msg.timestamp, msg, cbor_data.contains(PipeMessage::KEY_Error)};
+    if(!msg.hasReadMsgs())return;
 
-    //PipeClient::KEY_Param2
-    if(cbor_data.value(PipeMessage::KEY_Param2).isInteger())
+    const auto &msgs = msg.readMsgs().msgs();
+    if(msgs.isEmpty())
     {
-        qDbg() << "[READ_MSG]: pMsg is NULL";
+        qDbg() << "[READ_MSG]: no messages returned";
+        return;
     }
-    else
-    {
-        auto cbor_msgs = cbor_data.value(PipeMessage::KEY_Param2).toMap();
-        auto msgs_count = cbor_msgs.value(0).toInteger(0);
-        auto msgs = cbor_msgs.value(1).toArray();
 
-        for(auto i = 0; i < msgs_count; i++)
+    for(const auto &src: msgs)
+    {
+        PASSTHRU_MSG * pmsg = new PASSTHRU_MSG();
+        memset(pmsg, 0, sizeof(PASSTHRU_MSG));
+        pmsg->ProtocolID = src.protocolId();
+        pmsg->RxStatus = src.rxStatus();
+        pmsg->TxFlags = src.txFlags();
+        pmsg->Timestamp = src.timestamp();
+        pmsg->DataSize = src.dataSize();
+        pmsg->ExtraDataIndex = src.extraDataIndex();
+
+        const auto &data = src.data();
+        if(qsizetype(pmsg->DataSize) != data.size())
         {
-            PASSTHRU_MSG * msg = new PASSTHRU_MSG();
-            memset(msg, 0, sizeof(PASSTHRU_MSG));
-            auto cbor_msg = msgs[i].toMap();
-            msg->ProtocolID = cbor_msg.value(PipeMessage::KEY_Param1).toInteger(0);
-            msg->RxStatus = cbor_msg.value(PipeMessage::KEY_Param2).toInteger(0);
-            msg->TxFlags = cbor_msg.value(PipeMessage::KEY_Param3).toInteger(0);
-            msg->Timestamp = cbor_msg.value(PipeMessage::KEY_Param4).toInteger(0);
-            msg->DataSize = cbor_msg.value(PipeMessage::KEY_Param5).toInteger(0);
-            msg->ExtraDataIndex = cbor_msg.value(PipeMessage::KEY_Param6).toInteger(0);
-            auto data = cbor_msg.value(PipeMessage::KEY_Param7).toByteArray();
-            if(data.length() != msg->DataSize)
-            {
-                qDbg() << "[CAN_RX_MSG] data length != DataSize in PASSTH_MSG!";
-                memcpy(msg->Data, data.constData(), data.length());
-            }
-            else
-            {
-                memcpy(msg->Data, data.constData(), data.length());
-            }
-
-            this->addElement(msg);
+            qDbg() << "[CAN_RX_MSG] data length != DataSize in PASSTHRU_MSG!";
         }
+        memcpy(pmsg->Data, data.constData(), std::min<size_t>(data.size(), sizeof(pmsg->Data)));
+
+        this->addElement(pmsg);
     }
-
-
-    //this->addElement(obj);
 }
 
 void ExJ2534ReadMsgsList::addElement(PASSTHRU_MSG * obj)

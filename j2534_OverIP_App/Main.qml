@@ -42,7 +42,7 @@ ApplicationWindow
         {
         case 0:
             console.log("SimpleLogger")
-            stackViewMain.push("TestPage.qml")
+            // NoInterfacePage is already the initial item
             break
         case 2:
             console.log("J2534DllWrapper")
@@ -134,7 +134,7 @@ ApplicationWindow
 
                         model: ListModel {
                             ListElement { title: "Main"; source: "MainPage.qml" }
-                            ListElement { title: "Test"; source: "TestPage.qml" }
+                            ListElement { title: "Interface"; source: "NoInterfacePage.qml" }
                         }
 
                         ScrollIndicator.vertical: ScrollIndicator { }
@@ -191,7 +191,7 @@ ApplicationWindow
                     }
                 }
 
-                initialItem: TestPage{}
+                initialItem: NoInterfacePage{}
 
                 //initialItem: MainPage{}
 

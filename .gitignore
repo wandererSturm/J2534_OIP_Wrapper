@@ -126,3 +126,8 @@ compile_commands.json
 *creator.user*
 
 *_qmlcache.qrc
+
+# CMake
+/build/
+/dist/
+CMakeUserPresets.json

@@ -1,12 +1,9 @@
 #include "defs.h"
-#include <QCborValue>
-#include <QCborMap>
 
 #include "exmessagepreprocessor.h"
 #include "exj2534emulator.h"
 #include "exj2534wrapper.h"
 #include "exj2534cannelloni.h"
-#include "qcborarray.h"
 
 
 ExMessagePreProcessor::ExMessagePreProcessor(QObject *parent):QObject{parent}
@@ -22,23 +19,21 @@ ExMessagePreProcessor * ExMessagePreProcessor::getInstance()
 
 void ExMessagePreProcessor::incommingMessageFromClient(PipeMessage msg)
 {
-    qDbg() << "[MSG]:" << msg.path << " id:" << msg.id << " tstamp: " << msg.timestamp << " type:" << msg.type << " message:" << msg.message << " data size:" << msg.data.size();
-    if(msg.data_type == 1)
-    {
-        auto cb_map = QCborValue::fromCbor(msg.data).toMap();
-        qDbg() << "[DATA] " << cb_map;
-    }
+    qDbg() << "[MSG]:" << msg.processPath() << " id:" << msg.clientId() << " tstamp: " << msg.timestampMs()
+           << " module:" << msg.module() << " text:" << msg.text() << " payload:" << msg.payloadField();
 
-    switch(msg.type)
+    switch(msg.module())
     {
-    case 2:
+    case PipeModule::MODULE_DLL_WRAPPER:
         ExJ2534Wrapper::getInstance()->processPipeMessage(msg);
         break;
-    case 3: // J2534Emulator
+    case PipeModule::MODULE_EMULATOR:
         ExJ2534Emulator::getInstance()->processPipeMessage(msg);
         break;
-    case 4:
+    case PipeModule::MODULE_CANNELLONI:
         ExJ2534Cannelloni::getInstance()->processPipeMessage(msg);
+        break;
+    default:
         break;
     }
 

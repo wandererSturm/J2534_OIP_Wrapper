@@ -1,30 +1,35 @@
 #include "ExDbg.h"
 #include "j2534dllwrapper.h"
-#include "cbor_utils.h"
-#include "timestamp_util.h"
+
+#include <cstring>
+
+namespace {
+
+std::string not_found(const char* function)
+{
+    return std::string("Function ").append(function).append(" not found in DLL.");
+}
+
+// Fixed-size char arrays from drivers are not always null-terminated.
+std::string bounded(const char* s, size_t max_len)
+{
+    return s == nullptr ? std::string() : std::string(s, strnlen(s, max_len));
+}
+
+} // namespace
 
 J2534DllWrapper::J2534DllWrapper()
 {
-
     this->_p_pipe = new ExPipeClient("\\\\.\\pipe\\exj2534_overip_pipe");
     this->_p_pipe->connect();
 
     this->p_path = ExDbg::getProcessPath();
     this->p_id = ExDbg::crc32(ExDbg::getProcessPath());
-    this->p_type = 2; // 2 = J2534DllWrapper
-    this->p_data_type = 2; // 2 = cbor
 
-    cn_cbor_errback cn_errback = {0};
-    cn_cbor* cb_map_root = cn_cbor_map_create(&cn_errback);
-
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_FuncName /* function */, 0 /* constructor */);
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_Param1 /* param_1 */, (uint32_t)this);
-
-    auto ts = get_timestamp();
-    EXDBG_LOG << "[J2534DllWrapper]: timestamp " << ts << EXDBG_END;
-    this->_p_pipe->send({this->p_id, this->p_type, this->p_data_type, ts, this->p_path, "J2534DllWrapper Verbunden!", cbor_utils::cbor_to_data(cb_map_root)});
-
-    cn_cbor_free(cb_map_root);
+    auto msg = message("J2534DllWrapper Verbunden!");
+    auto& started = msg.select(j2534_pipe_PipeMessage_module_started_tag, msg.msg().payload.module_started);
+    started.instance = reinterpret_cast<uintptr_t>(this);
+    send(msg);
 }
 
 std::string J2534DllWrapper::getIName()
@@ -34,6 +39,15 @@ std::string J2534DllWrapper::getIName()
     return std::string(pname);
 }
 
+PipeMessageBuilder J2534DllWrapper::message(std::string text)
+{
+    return PipeMessageBuilder(j2534_pipe_Module_MODULE_DLL_WRAPPER, this->p_id, this->p_path, std::move(text));
+}
+
+void J2534DllWrapper::send(PipeMessageBuilder& message)
+{
+    this->_p_pipe->send(message);
+}
 
 bool J2534DllWrapper::loadDll(const std::wstring& dllPath)
 {
@@ -41,81 +55,69 @@ bool J2534DllWrapper::loadDll(const std::wstring& dllPath)
     std::use_facet<std::ctype<wchar_t>>(std::locale{}).narrow(dllPath.data(), dllPath.data() + dllPath.size(), '?', buf.data());
     auto dllPathA = std::string(buf.data(), buf.size());
 
-    //EXDBG_LOG << "Loading J2534 Dll from Path: " << dllPathA << EXDBG_END;
-
-    cn_cbor_errback cn_errback = {0};
-    cn_cbor* cb_map_root = cn_cbor_map_create(&cn_errback);
-    cn_cbor* cb_map = cn_cbor_map_create(&cn_errback);
-
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_FuncName /* function */, 1 /* constructor */);
-    cbor_utils::map_put_string(cb_map_root, ExPipeClient::KEY_Param1 /* param_1 */, dllPathA.c_str());
-
-    //cbor_utils::map_put_string(cb_map_root, "dll_path", dllPathA.c_str());
+    auto msg = message();
+    auto& loaded = msg.select(j2534_pipe_PipeMessage_dll_loaded_tag, msg.msg().payload.dll_loaded);
+    loaded.path = msg.str(dllPathA);
 
     HMODULE hModule = LoadLibraryW(dllPath.c_str());
-    if (hModule)
+    if (!hModule)
     {
-        m_dllHandle.reset(hModule);
-
-        m_PassThruOpen = loadFunction<PTOPEN>("PassThruOpen", cb_map);
-        m_PassThruClose = loadFunction<PTCLOSE>("PassThruClose", cb_map);
-        m_PassThruConnect = loadFunction<PTCONNECT>("PassThruConnect", cb_map);
-        m_PassThruDisconnect = loadFunction<PTDISCONNECT>("PassThruDisconnect", cb_map);
-        m_PassThruReadMsgs = loadFunction<PTREADMSGS>("PassThruReadMsgs", cb_map);
-        m_PassThruWriteMsgs = loadFunction<PTWRITEMSGS>("PassThruWriteMsgs", cb_map);
-        m_PassThruStartPeriodicMsg = loadFunction<PTSTARTPERIODICMSG>("PassThruStartPeriodicMsg", cb_map);
-        m_PassThruStopPeriodicMsg = loadFunction<PTSTOPPERIODICMSG>("PassThruStopPeriodicMsg", cb_map);
-        m_PassThruStartMsgFilter = loadFunction<PTSTARTMSGFILTER>("PassThruStartMsgFilter", cb_map);
-        m_PassThruStopMsgFilter = loadFunction<PTSTOPMSGFILTER>("PassThruStopMsgFilter", cb_map);
-        m_PassThruSetProgrammingVoltage = loadFunction<PTSETPROGRAMMINGVOLTAGE>("PassThruSetProgrammingVoltage", cb_map);
-        m_PassThruReadVersion = loadFunction<PTREADVERSION>("PassThruReadVersion", cb_map);
-        m_PassThruGetLastError = loadFunction<PTGETLASTERROR>("PassThruGetLastError", cb_map);
-        m_PassThruIoctl = loadFunction<PTIOCTL>("PassThruIoctl", cb_map);
-
-        // Drew Tech specific function calls
-        m_PassThruLoadFirmware = loadFunction<PTLOADFIRMWARE>("PassThruLoadFirmware", cb_map);
-        m_PassThruRecoverFirmware = loadFunction<PTRECOVERFIRMWARE>("PassThruRecoverFirmware", cb_map);
-        m_PassThruReadIPSetup = loadFunction<PTREADIPSETUP>("PassThruReadIPSetup", cb_map);
-        m_PassThruWriteIPSetup = loadFunction<PTWRITEIPSETUP>("PassThruWriteIPSetup", cb_map);
-        m_PassThruReadPCSetup = loadFunction<PTREADPCSETUP>("PassThruReadPCSetup", cb_map);
-        m_PassThruGetPointer = loadFunction<PTGETPOINTER>("PassThruGetPointer", cb_map);
-        m_PassThruGetNextCarDAQ = loadFunction<PTGETNEXTCARDAQ>("PassThruGetNextCarDAQ", cb_map);
-
-        m_PassThruExConfigureWiFi = loadFunction<PTEXCONFIGWIFI>("PassThruExConfigureWiFi", cb_map);
-        m_PassThruExDeviceWatchdog = loadFunction<PTEXDEVWATCHDOG>("PassThruExDeviceWatchdog", cb_map);
-        m_PassThruExDownloadCypheredFlashData = loadFunction<PTEXDLCYPHFLASHDATA>("PassThruExDownloadCypheredFlashData", cb_map);
-        m_PassThruExEraseFlash = loadFunction<PTEXERASEFLASH>("PassThruExEraseFlash", cb_map);
-        m_PassThruExInitiateCypheredFlashDownload = loadFunction<PTEXINITCYPHFLASHDL>("PassThruExInitiateCypheredFlashDownload", cb_map);
-        m_PassThruExReadFlash = loadFunction<PTEXREADFLASH>("PassThruExReadFlash", cb_map);
-        m_PassThruExResetFlash = loadFunction<PTEXRESETFLASH>("PassThruExResetFlash", cb_map);
-        m_PassThruExRunSelfTest = loadFunction<PTEXRINSELFTEST>("PassThruExRunSelfTest", cb_map);
-        m_PassThruExWriteFlash = loadFunction<PTEXWRITEFLASH>("PassThruExWriteFlash", cb_map);
-        m_PassThruQueueMsgs = loadFunction<PTQUEUEMSGS>("PassThruQueueMsgs", cb_map);
-
-        ///v05.00
-        m_PassThruScanForDevices = loadFunction<PTSCANFORDEVICES>("PassThruScanForDevices", cb_map);
-        m_PassThruGetNextDevice = loadFunction<PTGETNEXTDEV>("PassThruGetNextDevice", cb_map);
-        m_PassThruSelect = loadFunction<PTSELECT>("PassThruSelect", cb_map);
-
-        cbor_utils::map_put_map(cb_map_root, ExPipeClient::KEY_Param2, cb_map);
-        this->_p_pipe->send({this->p_id, this->p_type, this->p_data_type, get_timestamp(), this->p_path, "wrapped functions", cbor_utils::cbor_to_data(cb_map_root)});
-
-        cn_cbor_free(cb_map);
-        cn_cbor_free(cb_map_root);
-
-        return true;
-    } else {
-        cbor_utils::map_put_map(cb_map_root, ExPipeClient::KEY_Param2, cb_map);
-        cbor_utils::map_put_string(cb_map_root, ExPipeClient::KEY_Error, std::string("Can't load DLL ").append(dllPathA).c_str());
-
-        this->_p_pipe->send({this->p_id, this->p_type, this->p_data_type, get_timestamp(), this->p_path, "loadDll", cbor_utils::cbor_to_data(cb_map_root)});
-
-        cn_cbor_free(cb_map);
-        cn_cbor_free(cb_map_root);
-
-        //EXDBG_LOG << "Failed to load library " << dllPathA << "." << EXDBG_END;
+        msg.msg().text = msg.str(std::string("loadDll"));
+        loaded.error = msg.str(std::string("Can't load DLL ").append(dllPathA));
+        send(msg);
         return false;
     }
+
+    m_dllHandle.reset(hModule);
+
+    std::vector<PipeMessageBuilder::DllFunction> report;
+
+    m_PassThruOpen = loadFunction<PTOPEN>("PassThruOpen", &report);
+    m_PassThruClose = loadFunction<PTCLOSE>("PassThruClose", &report);
+    m_PassThruConnect = loadFunction<PTCONNECT>("PassThruConnect", &report);
+    m_PassThruDisconnect = loadFunction<PTDISCONNECT>("PassThruDisconnect", &report);
+    m_PassThruReadMsgs = loadFunction<PTREADMSGS>("PassThruReadMsgs", &report);
+    m_PassThruWriteMsgs = loadFunction<PTWRITEMSGS>("PassThruWriteMsgs", &report);
+    m_PassThruStartPeriodicMsg = loadFunction<PTSTARTPERIODICMSG>("PassThruStartPeriodicMsg", &report);
+    m_PassThruStopPeriodicMsg = loadFunction<PTSTOPPERIODICMSG>("PassThruStopPeriodicMsg", &report);
+    m_PassThruStartMsgFilter = loadFunction<PTSTARTMSGFILTER>("PassThruStartMsgFilter", &report);
+    m_PassThruStopMsgFilter = loadFunction<PTSTOPMSGFILTER>("PassThruStopMsgFilter", &report);
+    m_PassThruSetProgrammingVoltage = loadFunction<PTSETPROGRAMMINGVOLTAGE>("PassThruSetProgrammingVoltage", &report);
+    m_PassThruReadVersion = loadFunction<PTREADVERSION>("PassThruReadVersion", &report);
+    m_PassThruGetLastError = loadFunction<PTGETLASTERROR>("PassThruGetLastError", &report);
+    m_PassThruIoctl = loadFunction<PTIOCTL>("PassThruIoctl", &report);
+
+    // Drew Tech specific function calls
+    m_PassThruLoadFirmware = loadFunction<PTLOADFIRMWARE>("PassThruLoadFirmware", &report);
+    m_PassThruRecoverFirmware = loadFunction<PTRECOVERFIRMWARE>("PassThruRecoverFirmware", &report);
+    m_PassThruReadIPSetup = loadFunction<PTREADIPSETUP>("PassThruReadIPSetup", &report);
+    m_PassThruWriteIPSetup = loadFunction<PTWRITEIPSETUP>("PassThruWriteIPSetup", &report);
+    m_PassThruReadPCSetup = loadFunction<PTREADPCSETUP>("PassThruReadPCSetup", &report);
+    m_PassThruGetPointer = loadFunction<PTGETPOINTER>("PassThruGetPointer", &report);
+    m_PassThruGetNextCarDAQ = loadFunction<PTGETNEXTCARDAQ>("PassThruGetNextCarDAQ", &report);
+
+    m_PassThruExConfigureWiFi = loadFunction<PTEXCONFIGWIFI>("PassThruExConfigureWiFi", &report);
+    m_PassThruExDeviceWatchdog = loadFunction<PTEXDEVWATCHDOG>("PassThruExDeviceWatchdog", &report);
+    m_PassThruExDownloadCypheredFlashData = loadFunction<PTEXDLCYPHFLASHDATA>("PassThruExDownloadCypheredFlashData", &report);
+    m_PassThruExEraseFlash = loadFunction<PTEXERASEFLASH>("PassThruExEraseFlash", &report);
+    m_PassThruExInitiateCypheredFlashDownload = loadFunction<PTEXINITCYPHFLASHDL>("PassThruExInitiateCypheredFlashDownload", &report);
+    m_PassThruExReadFlash = loadFunction<PTEXREADFLASH>("PassThruExReadFlash", &report);
+    m_PassThruExResetFlash = loadFunction<PTEXRESETFLASH>("PassThruExResetFlash", &report);
+    m_PassThruExRunSelfTest = loadFunction<PTEXRINSELFTEST>("PassThruExRunSelfTest", &report);
+    m_PassThruExWriteFlash = loadFunction<PTEXWRITEFLASH>("PassThruExWriteFlash", &report);
+    m_PassThruQueueMsgs = loadFunction<PTQUEUEMSGS>("PassThruQueueMsgs", &report);
+    m_PassThruReadDetails = loadFunction<PTREADDETAILS>("PassThruReadDetails", &report);
+
+    ///v05.00
+    m_PassThruScanForDevices = loadFunction<PTSCANFORDEVICES>("PassThruScanForDevices", &report);
+    m_PassThruGetNextDevice = loadFunction<PTGETNEXTDEV>("PassThruGetNextDevice", &report);
+    m_PassThruSelect = loadFunction<PTSELECT>("PassThruSelect", &report);
+
+    msg.msg().text = msg.str(std::string("wrapped functions"));
+    loaded.functions = msg.dll_functions(std::move(report));
+    send(msg);
+
+    return true;
 }
 
 void J2534DllWrapper::unloadDll() {
@@ -123,14 +125,10 @@ void J2534DllWrapper::unloadDll() {
 }
 
 template <typename FunctionType>
-FunctionType J2534DllWrapper::loadFunction(const char* functionName, cn_cbor * cb_map) {
+FunctionType J2534DllWrapper::loadFunction(const char* functionName, std::vector<PipeMessageBuilder::DllFunction>* report) {
     auto proc = reinterpret_cast<FunctionType>(GetProcAddress(reinterpret_cast<HMODULE>(m_dllHandle.get()), functionName));
-    if (!proc) {
-        if(cb_map != nullptr)cbor_utils::map_put_bool(cb_map, functionName, false);
-        //EXDBG_LOG << "Failed to load function " << functionName << "." << EXDBG_END;
-        return nullptr;
-    }
-    if(cb_map != nullptr)cbor_utils::map_put_bool(cb_map, functionName, true);
+    if (report != nullptr)
+        report->push_back({functionName, proc != nullptr});
     return proc;
 }
 
@@ -138,24 +136,19 @@ long J2534DllWrapper::PassThruOpen(const void *pName, unsigned long *pDeviceID)
 {
     long retval = ERR_NOT_SUPPORTED;
 
-    cn_cbor_errback cn_errback = {0};
-    cn_cbor* cb_map_root = cn_cbor_map_create(&cn_errback);
+    auto msg = message("PassThruOpen");
+    auto& call = msg.select(j2534_pipe_PipeMessage_open_tag, msg.msg().payload.open);
+    call.name = msg.str(static_cast<const char*>(pName));
 
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_FuncName /* function */, ExPipeClient::KEY_PassThruOpen);
-    cbor_utils::map_put_string(cb_map_root, ExPipeClient::KEY_Param1 /* param_1 */, (pName == NULL?"":(const char *)pName));
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_Param2 /* param_2 */, *pDeviceID);
-
-    if (this->m_PassThruOpen)
-    {
+    if (this->m_PassThruOpen) {
         retval = this->m_PassThruOpen(pName, pDeviceID);
-        cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_RETVAL_LONG, retval);
+        if (pDeviceID) call.device_id = *pDeviceID;
+        msg.result(call, retval);
     } else {
-        //EXDBG_LOG << "Function " << __FUNCTION__ << " not found in DLL." << EXDBG_END;
-        cbor_utils::map_put_string(cb_map_root, ExPipeClient::KEY_Error, std::string("Function ").append(__FUNCTION__).append(" not found in DLL.").c_str());
+        msg.result(call, retval, not_found(__FUNCTION__));
     }
 
-    this->_p_pipe->send({this->p_id, this->p_type, this->p_data_type, get_timestamp(), this->p_path, "PassThruOpen", cbor_utils::cbor_to_data(cb_map_root)});
-    cn_cbor_free(cb_map_root);
+    send(msg);
     return retval;
 }
 
@@ -163,23 +156,18 @@ long J2534DllWrapper::PassThruClose(unsigned long DeviceID)
 {
     long retval = ERR_NOT_SUPPORTED;
 
-    cn_cbor_errback cn_errback = {0};
-    cn_cbor* cb_map_root = cn_cbor_map_create(&cn_errback);
-
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_FuncName /* function */, ExPipeClient::KEY_PassThruClose);
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_Param1 /* param_1 */, DeviceID);
+    auto msg = message("PassThruClose");
+    auto& call = msg.select(j2534_pipe_PipeMessage_close_tag, msg.msg().payload.close);
+    call.device_id = DeviceID;
 
     if (this->m_PassThruClose) {
         retval = this->m_PassThruClose(DeviceID);
-        cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_RETVAL_LONG, retval);
-
+        msg.result(call, retval);
     } else {
-        //EXDBG_LOG << "Function " << __FUNCTION__ << " not found in DLL." << EXDBG_END;
-        cbor_utils::map_put_string(cb_map_root, ExPipeClient::KEY_Error, std::string("Function ").append(__FUNCTION__).append(" not found in DLL.").c_str());
+        msg.result(call, retval, not_found(__FUNCTION__));
     }
 
-    this->_p_pipe->send({this->p_id, this->p_type, this->p_data_type, get_timestamp(), this->p_path, "PassThruOpen", cbor_utils::cbor_to_data(cb_map_root)});
-    cn_cbor_free(cb_map_root);
+    send(msg);
     return retval;
 }
 
@@ -187,26 +175,22 @@ long J2534DllWrapper::PassThruConnect(unsigned long DeviceID, unsigned long Prot
 {
     long retval = ERR_NOT_SUPPORTED;
 
-    cn_cbor_errback cn_errback = {0};
-    cn_cbor* cb_map_root = cn_cbor_map_create(&cn_errback);
-
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_FuncName /* function */, ExPipeClient::KEY_PassThruConnect);
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_Param1 /* param_1 */, DeviceID);
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_Param2 /* param_1 */, ProtocolID);
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_Param3 /* param_1 */, Flags);
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_Param4 /* param_1 */, Baudrate);
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_Param5 /* param_1 */, *pChannelID);
+    auto msg = message("PassThruConnect");
+    auto& call = msg.select(j2534_pipe_PipeMessage_connect_tag, msg.msg().payload.connect);
+    call.device_id = DeviceID;
+    call.protocol_id = ProtocolID;
+    call.flags = Flags;
+    call.baudrate = Baudrate;
 
     if (this->m_PassThruConnect) {
         retval = this->m_PassThruConnect(DeviceID, ProtocolID, Flags, Baudrate, pChannelID);
-        cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_RETVAL_LONG, retval);
+        if (pChannelID) call.channel_id = *pChannelID;
+        msg.result(call, retval);
     } else {
-        //EXDBG_LOG << "Function " << __FUNCTION__ << " not found in DLL." << EXDBG_END;
-        cbor_utils::map_put_string(cb_map_root, ExPipeClient::KEY_Error, std::string("Function ").append(__FUNCTION__).append(" not found in DLL.").c_str());
+        msg.result(call, retval, not_found(__FUNCTION__));
     }
 
-    this->_p_pipe->send({this->p_id, this->p_type, this->p_data_type, get_timestamp(), this->p_path, "PassThruConnect", cbor_utils::cbor_to_data(cb_map_root)});
-    cn_cbor_free(cb_map_root);
+    send(msg);
     return retval;
 }
 
@@ -214,22 +198,18 @@ long J2534DllWrapper::PassThruDisconnect(unsigned long ChannelID)
 {
     long retval = ERR_NOT_SUPPORTED;
 
-    cn_cbor_errback cn_errback = {0};
-    cn_cbor* cb_map_root = cn_cbor_map_create(&cn_errback);
-
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_FuncName /* function */, ExPipeClient::KEY_PassThruDisconnect);
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_Param1 /* param_1 */, ChannelID);
+    auto msg = message("PassThruDisconnect");
+    auto& call = msg.select(j2534_pipe_PipeMessage_disconnect_tag, msg.msg().payload.disconnect);
+    call.channel_id = ChannelID;
 
     if (this->m_PassThruDisconnect) {
         retval = this->m_PassThruDisconnect(ChannelID);
-        cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_RETVAL_LONG, retval);
+        msg.result(call, retval);
     } else {
-        //EXDBG_LOG << "Function " << __FUNCTION__ << " not found in DLL." << EXDBG_END;
-        cbor_utils::map_put_string(cb_map_root, ExPipeClient::KEY_Error, std::string("Function ").append(__FUNCTION__).append(" not found in DLL.").c_str());
+        msg.result(call, retval, not_found(__FUNCTION__));
     }
 
-    this->_p_pipe->send({this->p_id, this->p_type, this->p_data_type, get_timestamp(), this->p_path, "PassThruConnect", cbor_utils::cbor_to_data(cb_map_root)});
-    cn_cbor_free(cb_map_root);
+    send(msg);
     return retval;
 }
 
@@ -237,31 +217,23 @@ long J2534DllWrapper::PassThruReadMsgs(unsigned long ChannelID, PASSTHRU_MSG *pM
 {
     long retval = ERR_NOT_SUPPORTED;
 
-    cn_cbor_errback cn_errback = {0};
-    cn_cbor* cb_map_root = cn_cbor_map_create(&cn_errback);
-
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_FuncName /* function */, ExPipeClient::KEY_PassThruReadMsgs);
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_Param1 /* param_1 */, ChannelID);
-    //cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_Param2, 0);
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_Param3, *pNumMsgs);
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_Param4, Timeout);
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_RX_TX, 0);
+    auto msg = message("PassThruReadMsgs");
+    auto& call = msg.select(j2534_pipe_PipeMessage_read_msgs_tag, msg.msg().payload.read_msgs);
+    call.channel_id = ChannelID;
+    call.num_msgs_requested = pNumMsgs ? *pNumMsgs : 0;
+    call.timeout = Timeout;
 
     if (this->m_PassThruReadMsgs) {
         retval = this->m_PassThruReadMsgs(ChannelID, pMsg, pNumMsgs, Timeout);
-        cbor_utils::map_put_PASSTHRU_MSG(cb_map_root, ExPipeClient::KEY_Param2, *pNumMsgs, pMsg);
-        cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_Param3, *pNumMsgs);
-        cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_Param4, Timeout);
-        cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_RX_TX, 1);
-        cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_RETVAL_LONG, retval);
+        // On return *pNumMsgs holds how many messages the driver filled in.
+        call.msgs = msg.msgs(pMsg, pNumMsgs ? *pNumMsgs : 0);
+        msg.result(call, retval);
     } else {
         EXDBG_LOG << "Function " << __FUNCTION__ << " not found in DLL." << EXDBG_END;
-        cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_Param2, 0);
-        cbor_utils::map_put_string(cb_map_root, ExPipeClient::KEY_Error, std::string("Function ").append(__FUNCTION__).append(" not found in DLL.").c_str());
+        msg.result(call, retval, not_found(__FUNCTION__));
     }
 
-    this->_p_pipe->send({this->p_id, this->p_type, this->p_data_type, get_timestamp(), this->p_path, "PassThruReadMsgs", cbor_utils::cbor_to_data(cb_map_root)});
-    cn_cbor_free(cb_map_root);
+    send(msg);
     return retval;
 }
 
@@ -269,24 +241,20 @@ long J2534DllWrapper::PassThruQueueMsgs(unsigned long ChannelID, PASSTHRU_MSG *p
 {
     long retval = ERR_NOT_SUPPORTED;
 
-    cn_cbor_errback cn_errback = {0};
-    cn_cbor* cb_map_root = cn_cbor_map_create(&cn_errback);
-
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_FuncName /* function */, ExPipeClient::KEY_PassThruQueueMsgs);
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_Param1 /* param_1 */, ChannelID);
-    cbor_utils::map_put_PASSTHRU_MSG(cb_map_root, ExPipeClient::KEY_Param2, *pNumMsgs, pMsg);
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_Param3 /* param_1 */, *pNumMsgs);
+    auto msg = message("PassThruQueueMsgs");
+    auto& call = msg.select(j2534_pipe_PipeMessage_queue_msgs_tag, msg.msg().payload.queue_msgs);
+    call.channel_id = ChannelID;
+    call.msgs = msg.msgs(pMsg, pNumMsgs ? *pNumMsgs : 0);
 
     if (this->m_PassThruQueueMsgs) {
         retval = this->m_PassThruQueueMsgs(ChannelID, pMsg, pNumMsgs);
-        cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_RETVAL_LONG, retval);
+        if (pNumMsgs) call.num_msgs_queued = *pNumMsgs;
+        msg.result(call, retval);
     } else {
-        //EXDBG_LOG << "Function " << __FUNCTION__ << " not found in DLL." << EXDBG_END;
-        cbor_utils::map_put_string(cb_map_root, ExPipeClient::KEY_Error, std::string("Function ").append(__FUNCTION__).append(" not found in DLL.").c_str());
+        msg.result(call, retval, not_found(__FUNCTION__));
     }
 
-    this->_p_pipe->send({this->p_id, this->p_type, this->p_data_type, get_timestamp(), this->p_path, "PassThruQueueMsgs", cbor_utils::cbor_to_data(cb_map_root)});
-    cn_cbor_free(cb_map_root);
+    send(msg);
     return retval;
 }
 
@@ -294,25 +262,21 @@ long J2534DllWrapper::PassThruWriteMsgs(unsigned long ChannelID, const PASSTHRU_
 {
     long retval = ERR_NOT_SUPPORTED;
 
-    cn_cbor_errback cn_errback = {0};
-    cn_cbor* cb_map_root = cn_cbor_map_create(&cn_errback);
-
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_FuncName /* function */, ExPipeClient::KEY_PassThruWriteMsgs);
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_Param1 /* param_1 */, ChannelID);
-    cbor_utils::map_put_PASSTHRU_MSG(cb_map_root, ExPipeClient::KEY_Param2, *pNumMsgs, pMsg);
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_Param3 /* param_1 */, *pNumMsgs);
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_Param4 /* param_1 */, Timeout);
+    auto msg = message("PassThruWriteMsgs");
+    auto& call = msg.select(j2534_pipe_PipeMessage_write_msgs_tag, msg.msg().payload.write_msgs);
+    call.channel_id = ChannelID;
+    call.msgs = msg.msgs(pMsg, pNumMsgs ? *pNumMsgs : 0);
+    call.timeout = Timeout;
 
     if (this->m_PassThruWriteMsgs) {
         retval = this->m_PassThruWriteMsgs(ChannelID, (void*)pMsg, pNumMsgs, Timeout);
-        cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_RETVAL_LONG, retval);
+        if (pNumMsgs) call.num_msgs_written = *pNumMsgs;
+        msg.result(call, retval);
     } else {
-        //EXDBG_LOG << "Function " << __FUNCTION__ << " not found in DLL." << EXDBG_END;
-        cbor_utils::map_put_string(cb_map_root, ExPipeClient::KEY_Error, std::string("Function ").append(__FUNCTION__).append(" not found in DLL.").c_str());
+        msg.result(call, retval, not_found(__FUNCTION__));
     }
 
-    this->_p_pipe->send({this->p_id, this->p_type, this->p_data_type, get_timestamp(), this->p_path, "PassThruWriteMsgs", cbor_utils::cbor_to_data(cb_map_root)});
-    cn_cbor_free(cb_map_root);
+    send(msg);
     return retval;
 }
 
@@ -320,25 +284,21 @@ long J2534DllWrapper::PassThruStartPeriodicMsg(unsigned long ChannelID, const PA
 {
     long retval = ERR_NOT_SUPPORTED;
 
-    cn_cbor_errback cn_errback = {0};
-    cn_cbor* cb_map_root = cn_cbor_map_create(&cn_errback);
-
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_FuncName /* function */, ExPipeClient::KEY_PassThruStartPeriodicMsg);
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_Param1 /* param_1 */, ChannelID);
-    cbor_utils::map_put_PASSTHRU_MSG(cb_map_root, ExPipeClient::KEY_Param2, 1, pMsg);
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_Param3 /* param_1 */, *pMsgID);
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_Param4 /* param_1 */, TimeInterval);
+    auto msg = message("PassThruStartPeriodicMsg");
+    auto& call = msg.select(j2534_pipe_PipeMessage_start_periodic_msg_tag, msg.msg().payload.start_periodic_msg);
+    call.channel_id = ChannelID;
+    msg.passthru_msg(call.has_msg, call.msg, pMsg);
+    call.time_interval = TimeInterval;
 
     if (this->m_PassThruStartPeriodicMsg) {
         retval = this->m_PassThruStartPeriodicMsg(ChannelID, (void*)pMsg, pMsgID, TimeInterval);
-        cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_RETVAL_LONG, retval);
+        if (pMsgID) call.msg_id = *pMsgID;
+        msg.result(call, retval);
     } else {
-        //EXDBG_LOG << "Function " << __FUNCTION__ << " not found in DLL." << EXDBG_END;
-        cbor_utils::map_put_string(cb_map_root, ExPipeClient::KEY_Error, std::string("Function ").append(__FUNCTION__).append(" not found in DLL.").c_str());
+        msg.result(call, retval, not_found(__FUNCTION__));
     }
 
-    this->_p_pipe->send({this->p_id, this->p_type, this->p_data_type, get_timestamp(), this->p_path, "PassThruStartPeriodicMsg", cbor_utils::cbor_to_data(cb_map_root)});
-    cn_cbor_free(cb_map_root);
+    send(msg);
     return retval;
 }
 
@@ -346,23 +306,19 @@ long J2534DllWrapper::PassThruStopPeriodicMsg(unsigned long ChannelID, unsigned 
 {
     long retval = ERR_NOT_SUPPORTED;
 
-    cn_cbor_errback cn_errback = {0};
-    cn_cbor* cb_map_root = cn_cbor_map_create(&cn_errback);
-
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_FuncName /* function */, ExPipeClient::KEY_PassThruStopPeriodicMsg);
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_Param1 /* param_1 */, ChannelID);
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_Param2, MsgID);
+    auto msg = message("PassThruStopPeriodicMsg");
+    auto& call = msg.select(j2534_pipe_PipeMessage_stop_periodic_msg_tag, msg.msg().payload.stop_periodic_msg);
+    call.channel_id = ChannelID;
+    call.msg_id = MsgID;
 
     if (this->m_PassThruStopPeriodicMsg) {
         retval = this->m_PassThruStopPeriodicMsg(ChannelID, MsgID);
-        cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_RETVAL_LONG, retval);
+        msg.result(call, retval);
     } else {
-        //EXDBG_LOG << "Function " << __FUNCTION__ << " not found in DLL." << EXDBG_END;
-        cbor_utils::map_put_string(cb_map_root, ExPipeClient::KEY_Error, std::string("Function ").append(__FUNCTION__).append(" not found in DLL.").c_str());
+        msg.result(call, retval, not_found(__FUNCTION__));
     }
 
-    this->_p_pipe->send({this->p_id, this->p_type, this->p_data_type, get_timestamp(), this->p_path, "PassThruStopPeriodicMsg", cbor_utils::cbor_to_data(cb_map_root)});
-    cn_cbor_free(cb_map_root);
+    send(msg);
     return retval;
 }
 
@@ -370,27 +326,23 @@ long J2534DllWrapper::PassThruStartMsgFilter(unsigned long ChannelID, unsigned l
 {
     long retval = ERR_NOT_SUPPORTED;
 
-    cn_cbor_errback cn_errback = {0};
-    cn_cbor* cb_map_root = cn_cbor_map_create(&cn_errback);
-
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_FuncName /* function */, ExPipeClient::KEY_PassThruStartMsgFilter);
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_Param1 /* param_1 */, ChannelID);
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_Param2, FilterType);
-    cbor_utils::map_put_PASSTHRU_MSG(cb_map_root, ExPipeClient::KEY_Param3, 1, pMaskMsg);
-    cbor_utils::map_put_PASSTHRU_MSG(cb_map_root, ExPipeClient::KEY_Param4, 1, pPatternMsg);
-    cbor_utils::map_put_PASSTHRU_MSG(cb_map_root, ExPipeClient::KEY_Param5, 1, pFlowControlMsg);
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_Param6, *pMsgID);
+    auto msg = message("PassThruStartMsgFilter");
+    auto& call = msg.select(j2534_pipe_PipeMessage_start_msg_filter_tag, msg.msg().payload.start_msg_filter);
+    call.channel_id = ChannelID;
+    call.filter_type = FilterType;
+    msg.passthru_msg(call.has_mask, call.mask, pMaskMsg);
+    msg.passthru_msg(call.has_pattern, call.pattern, pPatternMsg);
+    msg.passthru_msg(call.has_flow_control, call.flow_control, pFlowControlMsg);
 
     if (this->m_PassThruStartMsgFilter) {
         retval = this->m_PassThruStartMsgFilter(ChannelID, FilterType, (void*)pMaskMsg, (void*)pPatternMsg, (void*)pFlowControlMsg, pMsgID);
-        cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_RETVAL_LONG, retval);
+        if (pMsgID) call.filter_id = *pMsgID;
+        msg.result(call, retval);
     } else {
-        //EXDBG_LOG << "Function " << __FUNCTION__ << " not found in DLL." << EXDBG_END;
-        cbor_utils::map_put_string(cb_map_root, ExPipeClient::KEY_Error, std::string("Function ").append(__FUNCTION__).append(" not found in DLL.").c_str());
+        msg.result(call, retval, not_found(__FUNCTION__));
     }
 
-    this->_p_pipe->send({this->p_id, this->p_type, this->p_data_type, get_timestamp(), this->p_path, "PassThruStartMsgFilter", cbor_utils::cbor_to_data(cb_map_root)});
-    cn_cbor_free(cb_map_root);
+    send(msg);
     return retval;
 }
 
@@ -398,23 +350,19 @@ long J2534DllWrapper::PassThruStopMsgFilter(unsigned long ChannelID, unsigned lo
 {
     long retval = ERR_NOT_SUPPORTED;
 
-    cn_cbor_errback cn_errback = {0};
-    cn_cbor* cb_map_root = cn_cbor_map_create(&cn_errback);
-
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_FuncName /* function */, ExPipeClient::KEY_PassThruStopMsgFilter);
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_Param1 /* param_1 */, ChannelID);
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_Param2, MsgID);
+    auto msg = message("PassThruStopMsgFilter");
+    auto& call = msg.select(j2534_pipe_PipeMessage_stop_msg_filter_tag, msg.msg().payload.stop_msg_filter);
+    call.channel_id = ChannelID;
+    call.filter_id = MsgID;
 
     if (this->m_PassThruStopMsgFilter) {
         retval = this->m_PassThruStopMsgFilter(ChannelID, MsgID);
-        cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_RETVAL_LONG, retval);
+        msg.result(call, retval);
     } else {
-        //EXDBG_LOG << "Function " << __FUNCTION__ << " not found in DLL." << EXDBG_END;
-        cbor_utils::map_put_string(cb_map_root, ExPipeClient::KEY_Error, std::string("Function ").append(__FUNCTION__).append(" not found in DLL.").c_str());
+        msg.result(call, retval, not_found(__FUNCTION__));
     }
 
-    this->_p_pipe->send({this->p_id, this->p_type, this->p_data_type, get_timestamp(), this->p_path, "PassThruStopMsgFilter", cbor_utils::cbor_to_data(cb_map_root)});
-    cn_cbor_free(cb_map_root);
+    send(msg);
     return retval;
 }
 
@@ -422,24 +370,20 @@ long J2534DllWrapper::PassThruSetProgrammingVoltage(unsigned long DeviceID, unsi
 {
     long retval = ERR_NOT_SUPPORTED;
 
-    cn_cbor_errback cn_errback = {0};
-    cn_cbor* cb_map_root = cn_cbor_map_create(&cn_errback);
-
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_FuncName /* function */, ExPipeClient::KEY_PassThruSetProgrammingVoltage);
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_Param1 /* param_1 */, DeviceID);
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_Param2, Pin);
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_Param2, Voltage);
+    auto msg = message("PassThruSetProgrammingVoltage");
+    auto& call = msg.select(j2534_pipe_PipeMessage_set_programming_voltage_tag, msg.msg().payload.set_programming_voltage);
+    call.device_id = DeviceID;
+    call.pin = Pin;
+    call.voltage = Voltage;
 
     if (this->m_PassThruSetProgrammingVoltage) {
         retval = this->m_PassThruSetProgrammingVoltage(DeviceID, Pin, Voltage);
-        cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_RETVAL_LONG, retval);
+        msg.result(call, retval);
     } else {
-        //EXDBG_LOG << "Function " << __FUNCTION__ << " not found in DLL." << EXDBG_END;
-        cbor_utils::map_put_string(cb_map_root, ExPipeClient::KEY_Error, std::string("Function ").append(__FUNCTION__).append(" not found in DLL.").c_str());
+        msg.result(call, retval, not_found(__FUNCTION__));
     }
 
-    this->_p_pipe->send({this->p_id, this->p_type, this->p_data_type, get_timestamp(), this->p_path, "PassThruSetProgrammingVoltage", cbor_utils::cbor_to_data(cb_map_root)});
-    cn_cbor_free(cb_map_root);
+    send(msg);
     return retval;
 }
 
@@ -447,33 +391,22 @@ long J2534DllWrapper::PassThruReadVersion(unsigned long DeviceID, char * pFirmwa
 {
     long retval = ERR_NOT_SUPPORTED;
 
-    cn_cbor_errback cn_errback = {0};
-    cn_cbor* cb_map_root = cn_cbor_map_create(&cn_errback);
-
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_FuncName /* function */, ExPipeClient::KEY_PassThruReadVersion);
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_Param1 /* param_1 */, DeviceID);
-    cbor_utils::map_put_string(cb_map_root, ExPipeClient::KEY_Param2 /* param_1 */, std::string(pFirmwareVersion).c_str());
-    cbor_utils::map_put_string(cb_map_root, ExPipeClient::KEY_Param3 /* param_1 */, std::string(pDllVersion).c_str());
-    cbor_utils::map_put_string(cb_map_root, ExPipeClient::KEY_Param4 /* param_1 */, std::string(pApiVersion).c_str());
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_RX_TX, 0);
-
+    auto msg = message("PassThruReadVersion");
+    auto& call = msg.select(j2534_pipe_PipeMessage_read_version_tag, msg.msg().payload.read_version);
+    call.device_id = DeviceID;
 
     if (this->m_PassThruReadVersion) {
-
         retval = this->m_PassThruReadVersion(DeviceID, pFirmwareVersion, pDllVersion, pApiVersion);
-        cbor_utils::map_put_string(cb_map_root, ExPipeClient::KEY_Param2 /* param_1 */, std::string(pFirmwareVersion).c_str());
-        cbor_utils::map_put_string(cb_map_root, ExPipeClient::KEY_Param3 /* param_1 */, std::string(pDllVersion).c_str());
-        cbor_utils::map_put_string(cb_map_root, ExPipeClient::KEY_Param4 /* param_1 */, std::string(pApiVersion).c_str());
-        cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_RETVAL_LONG, retval);
-        cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_RX_TX, 1);
-
+        // J2534 version strings are at most 80 chars including the terminator.
+        call.firmware_version = msg.str(bounded(pFirmwareVersion, 80));
+        call.dll_version = msg.str(bounded(pDllVersion, 80));
+        call.api_version = msg.str(bounded(pApiVersion, 80));
+        msg.result(call, retval);
     } else {
-        //EXDBG_LOG << "Function " << __FUNCTION__ << " not found in DLL." << EXDBG_END;
-        cbor_utils::map_put_string(cb_map_root, ExPipeClient::KEY_Error, std::string("Function ").append(__FUNCTION__).append(" not found in DLL.").c_str());
+        msg.result(call, retval, not_found(__FUNCTION__));
     }
 
-    this->_p_pipe->send({this->p_id, this->p_type, this->p_data_type, get_timestamp(), this->p_path, "PassThruReadVersion", cbor_utils::cbor_to_data(cb_map_root)});
-    cn_cbor_free(cb_map_root);
+    send(msg);
     return retval;
 }
 
@@ -481,25 +414,18 @@ long J2534DllWrapper::PassThruGetLastError(char *pErrorDescription)
 {
     long retval = ERR_NOT_SUPPORTED;
 
-    cn_cbor_errback cn_errback = {0};
-    cn_cbor* cb_map_root = cn_cbor_map_create(&cn_errback);
-
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_FuncName /* function */, ExPipeClient::KEY_PassThruGetLastError);
-    cbor_utils::map_put_string(cb_map_root, ExPipeClient::KEY_Param1 /* param_1 */, std::string(pErrorDescription).c_str());
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_RX_TX, 0);
+    auto msg = message("PassThruGetLastError");
+    auto& call = msg.select(j2534_pipe_PipeMessage_get_last_error_tag, msg.msg().payload.get_last_error);
 
     if (this->m_PassThruGetLastError) {
         retval = this->m_PassThruGetLastError(pErrorDescription);
-        cbor_utils::map_put_string(cb_map_root, ExPipeClient::KEY_Param1 /* param_1 */, std::string(pErrorDescription).c_str());
-        cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_RETVAL_LONG, retval);
-        cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_RX_TX, 1);
+        call.error_description = msg.str(bounded(pErrorDescription, 80));
+        msg.result(call, retval);
     } else {
-        //EXDBG_LOG << "Function " << __FUNCTION__ << " not found in DLL." << EXDBG_END;
-        cbor_utils::map_put_string(cb_map_root, ExPipeClient::KEY_Error, std::string("Function ").append(__FUNCTION__).append(" not found in DLL.").c_str());
+        msg.result(call, retval, not_found(__FUNCTION__));
     }
 
-    this->_p_pipe->send({this->p_id, this->p_type, this->p_data_type, get_timestamp(), this->p_path, "PassThruGetLastError", cbor_utils::cbor_to_data(cb_map_root)});
-    cn_cbor_free(cb_map_root);
+    send(msg);
     return retval;
 }
 
@@ -507,306 +433,120 @@ long J2534DllWrapper::PassThruIoctl(unsigned long ChannelID, unsigned long Ioctl
 {
     long retval = ERR_NOT_SUPPORTED;
 
-    cn_cbor_errback cn_errback = {0};
-    cn_cbor* cb_map_root = cn_cbor_map_create(&cn_errback);
-
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_FuncName /* function */, ExPipeClient::KEY_PassThruIoctl);
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_Param1, ChannelID);
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_Param2, IoctlID);
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_Param3, 0);
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_Param4, 0);
-
+    auto msg = message("PassThruIoctl");
+    auto& call = msg.select(j2534_pipe_PipeMessage_ioctl_tag, msg.msg().payload.ioctl);
+    call.channel_id = ChannelID;
+    call.ioctl_id = IoctlID;
 
     if (this->m_PassThruIoctl) {
         retval = this->m_PassThruIoctl(ChannelID, IoctlID, pInput, pOutput);
-        cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_RETVAL_LONG, retval);
+        msg.result(call, retval);
     } else {
-        //EXDBG_LOG << "Function " << __FUNCTION__ << " not found in DLL." << EXDBG_END;
-        cbor_utils::map_put_string(cb_map_root, ExPipeClient::KEY_Error, std::string("Function ").append(__FUNCTION__).append(" not found in DLL.").c_str());
+        msg.result(call, retval, not_found(__FUNCTION__));
     }
 
-    this->_p_pipe->send({this->p_id, this->p_type, this->p_data_type, get_timestamp(), this->p_path, "PassThruIoctl", cbor_utils::cbor_to_data(cb_map_root)});
-    cn_cbor_free(cb_map_root);
+    send(msg);
     return retval;
 }
 
 ///DREW Tech extra functions
 ///
-long J2534DllWrapper::PassThruExConfigureWiFi ( void )
+long J2534DllWrapper::callVendor(j2534_pipe_VendorFunction function, long (CALLBACK *fn)(void), const char* name)
 {
     long retval = ERR_NOT_SUPPORTED;
 
-    cn_cbor_errback cn_errback = {0};
-    cn_cbor* cb_map_root = cn_cbor_map_create(&cn_errback);
+    auto msg = message(name);
+    auto& call = msg.select(j2534_pipe_PipeMessage_vendor_tag, msg.msg().payload.vendor);
+    call.vendor_function = function;
 
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_FuncName /* function */, ExPipeClient::KEY_PassThruExConfigureWiFi);
-
-    if (this->m_PassThruExConfigureWiFi) {
-        retval = this->m_PassThruExConfigureWiFi();
-        cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_RETVAL_LONG, retval);
+    if (fn) {
+        retval = fn();
+        msg.result(call, retval);
     } else {
-        //EXDBG_LOG << "Function " << __FUNCTION__ << " not found in DLL." << EXDBG_END;
-        cbor_utils::map_put_string(cb_map_root, ExPipeClient::KEY_Error, std::string("Function ").append(__FUNCTION__).append(" not found in DLL.").c_str());
+        msg.result(call, retval, not_found(name));
     }
 
-    this->_p_pipe->send({this->p_id, this->p_type, this->p_data_type, get_timestamp(), this->p_path, "PassThruExConfigureWiFi", cbor_utils::cbor_to_data(cb_map_root)});
-    cn_cbor_free(cb_map_root);
+    send(msg);
     return retval;
+}
+
+long J2534DllWrapper::PassThruExConfigureWiFi ( void )
+{
+    return callVendor(j2534_pipe_VendorFunction_VENDOR_FUNCTION_EX_CONFIGURE_WIFI, this->m_PassThruExConfigureWiFi, "PassThruExConfigureWiFi");
 }
 
 long J2534DllWrapper::PassThruExDeviceWatchdog ( void )
 {
-    long retval = ERR_NOT_SUPPORTED;
-
-    cn_cbor_errback cn_errback = {0};
-    cn_cbor* cb_map_root = cn_cbor_map_create(&cn_errback);
-
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_FuncName /* function */, ExPipeClient::KEY_PassThruExDeviceWatchdog);
-
-    if (this->m_PassThruExDeviceWatchdog) {
-        retval = this->m_PassThruExDeviceWatchdog();
-        cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_RETVAL_LONG, retval);
-    } else {
-        //EXDBG_LOG << "Function " << __FUNCTION__ << " not found in DLL." << EXDBG_END;
-        cbor_utils::map_put_string(cb_map_root, ExPipeClient::KEY_Error, std::string("Function ").append(__FUNCTION__).append(" not found in DLL.").c_str());
-    }
-
-    this->_p_pipe->send({this->p_id, this->p_type, this->p_data_type, get_timestamp(), this->p_path, "PassThruExDeviceWatchdog", cbor_utils::cbor_to_data(cb_map_root)});
-    cn_cbor_free(cb_map_root);
-    return retval;
+    return callVendor(j2534_pipe_VendorFunction_VENDOR_FUNCTION_EX_DEVICE_WATCHDOG, this->m_PassThruExDeviceWatchdog, "PassThruExDeviceWatchdog");
 }
 
 long J2534DllWrapper::PassThruExDownloadCypheredFlashData ( void )
 {
-    long retval = ERR_NOT_SUPPORTED;
-
-    cn_cbor_errback cn_errback = {0};
-    cn_cbor* cb_map_root = cn_cbor_map_create(&cn_errback);
-
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_FuncName /* function */, ExPipeClient::KEY_PassThruExDownloadCypheredFlashData);
-
-    if (this->m_PassThruExDownloadCypheredFlashData) {
-        retval = this->m_PassThruExDownloadCypheredFlashData();
-        cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_RETVAL_LONG, retval);
-    } else {
-        //EXDBG_LOG << "Function " << __FUNCTION__ << " not found in DLL." << EXDBG_END;
-        cbor_utils::map_put_string(cb_map_root, ExPipeClient::KEY_Error, std::string("Function ").append(__FUNCTION__).append(" not found in DLL.").c_str());
-    }
-
-    this->_p_pipe->send({this->p_id, this->p_type, this->p_data_type, get_timestamp(), this->p_path, "PassThruExDownloadCypheredFlashData", cbor_utils::cbor_to_data(cb_map_root)});
-    cn_cbor_free(cb_map_root);
-    return retval;
+    return callVendor(j2534_pipe_VendorFunction_VENDOR_FUNCTION_EX_DOWNLOAD_CYPHERED_FLASH_DATA, this->m_PassThruExDownloadCypheredFlashData, "PassThruExDownloadCypheredFlashData");
 }
 
 long J2534DllWrapper::PassThruExEraseFlash ( void )
 {
-    long retval = ERR_NOT_SUPPORTED;
-
-    cn_cbor_errback cn_errback = {0};
-    cn_cbor* cb_map_root = cn_cbor_map_create(&cn_errback);
-
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_FuncName /* function */, ExPipeClient::KEY_PassThruExDownloadCypheredFlashData);
-
-    if (this->m_PassThruExEraseFlash) {
-        retval = this->m_PassThruExEraseFlash();
-        cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_RETVAL_LONG, retval);
-    } else {
-        //EXDBG_LOG << "Function " << __FUNCTION__ << " not found in DLL." << EXDBG_END;
-        cbor_utils::map_put_string(cb_map_root, ExPipeClient::KEY_Error, std::string("Function ").append(__FUNCTION__).append(" not found in DLL.").c_str());
-    }
-
-    this->_p_pipe->send({this->p_id, this->p_type, this->p_data_type, get_timestamp(), this->p_path, "PassThruExDownloadCypheredFlashData", cbor_utils::cbor_to_data(cb_map_root)});
-    cn_cbor_free(cb_map_root);
-    return retval;
+    return callVendor(j2534_pipe_VendorFunction_VENDOR_FUNCTION_EX_ERASE_FLASH, this->m_PassThruExEraseFlash, "PassThruExEraseFlash");
 }
 
 long J2534DllWrapper::PassThruExInitiateCypheredFlashDownload ( void )
 {
-    long retval = ERR_NOT_SUPPORTED;
-
-    cn_cbor_errback cn_errback = {0};
-    cn_cbor* cb_map_root = cn_cbor_map_create(&cn_errback);
-
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_FuncName /* function */, ExPipeClient::KEY_PassThruExInitiateCypheredFlashDownload);
-
-    if (this->m_PassThruExInitiateCypheredFlashDownload) {
-        retval = this->m_PassThruExInitiateCypheredFlashDownload();
-        cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_RETVAL_LONG, retval);
-    } else {
-        //EXDBG_LOG << "Function " << __FUNCTION__ << " not found in DLL." << EXDBG_END;
-        cbor_utils::map_put_string(cb_map_root, ExPipeClient::KEY_Error, std::string("Function ").append(__FUNCTION__).append(" not found in DLL.").c_str());
-    }
-
-    this->_p_pipe->send({this->p_id, this->p_type, this->p_data_type, get_timestamp(), this->p_path, "PassThruExInitiateCypheredFlashDownload", cbor_utils::cbor_to_data(cb_map_root)});
-    cn_cbor_free(cb_map_root);
-    return retval;
+    return callVendor(j2534_pipe_VendorFunction_VENDOR_FUNCTION_EX_INITIATE_CYPHERED_FLASH_DOWNLOAD, this->m_PassThruExInitiateCypheredFlashDownload, "PassThruExInitiateCypheredFlashDownload");
 }
 
 long J2534DllWrapper::PassThruExReadFlash ( void )
 {
-    long retval = ERR_NOT_SUPPORTED;
-
-    cn_cbor_errback cn_errback = {0};
-    cn_cbor* cb_map_root = cn_cbor_map_create(&cn_errback);
-
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_FuncName /* function */, ExPipeClient::KEY_PassThruExReadFlash);
-
-    if (this->m_PassThruExReadFlash) {
-        retval = this->m_PassThruExReadFlash();
-        cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_RETVAL_LONG, retval);
-    } else {
-        //EXDBG_LOG << "Function " << __FUNCTION__ << " not found in DLL." << EXDBG_END;
-        cbor_utils::map_put_string(cb_map_root, ExPipeClient::KEY_Error, std::string("Function ").append(__FUNCTION__).append(" not found in DLL.").c_str());
-    }
-
-    this->_p_pipe->send({this->p_id, this->p_type, this->p_data_type, get_timestamp(), this->p_path, "PassThruExReadFlash", cbor_utils::cbor_to_data(cb_map_root)});
-    cn_cbor_free(cb_map_root);
-    return retval;
+    return callVendor(j2534_pipe_VendorFunction_VENDOR_FUNCTION_EX_READ_FLASH, this->m_PassThruExReadFlash, "PassThruExReadFlash");
 }
 
 long J2534DllWrapper::PassThruExResetFlash ( void )
 {
-    long retval = ERR_NOT_SUPPORTED;
-
-    cn_cbor_errback cn_errback = {0};
-    cn_cbor* cb_map_root = cn_cbor_map_create(&cn_errback);
-
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_FuncName /* function */, ExPipeClient::KEY_PassThruExResetFlash);
-
-    if (this->m_PassThruExResetFlash) {
-        retval = this->m_PassThruExResetFlash();
-        cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_RETVAL_LONG, retval);
-    } else {
-        //EXDBG_LOG << "Function " << __FUNCTION__ << " not found in DLL." << EXDBG_END;
-        cbor_utils::map_put_string(cb_map_root, ExPipeClient::KEY_Error, std::string("Function ").append(__FUNCTION__).append(" not found in DLL.").c_str());
-    }
-
-    this->_p_pipe->send({this->p_id, this->p_type, this->p_data_type, get_timestamp(), this->p_path, "PassThruExResetFlash", cbor_utils::cbor_to_data(cb_map_root)});
-    cn_cbor_free(cb_map_root);
-    return retval;
+    return callVendor(j2534_pipe_VendorFunction_VENDOR_FUNCTION_EX_RESET_FLASH, this->m_PassThruExResetFlash, "PassThruExResetFlash");
 }
 
 long J2534DllWrapper::PassThruExRunSelfTest ( void )
 {
-    long retval = ERR_NOT_SUPPORTED;
-
-    cn_cbor_errback cn_errback = {0};
-    cn_cbor* cb_map_root = cn_cbor_map_create(&cn_errback);
-
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_FuncName /* function */, ExPipeClient::KEY_PassThruExRunSelfTest);
-
-    if (this->m_PassThruExRunSelfTest) {
-        retval = this->m_PassThruExRunSelfTest();
-        cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_RETVAL_LONG, retval);
-    } else {
-        //EXDBG_LOG << "Function " << __FUNCTION__ << " not found in DLL." << EXDBG_END;
-        cbor_utils::map_put_string(cb_map_root, ExPipeClient::KEY_Error, std::string("Function ").append(__FUNCTION__).append(" not found in DLL.").c_str());
-    }
-
-    this->_p_pipe->send({this->p_id, this->p_type, this->p_data_type, get_timestamp(), this->p_path, "PassThruExRunSelfTest", cbor_utils::cbor_to_data(cb_map_root)});
-    cn_cbor_free(cb_map_root);
-    return retval;
+    return callVendor(j2534_pipe_VendorFunction_VENDOR_FUNCTION_EX_RUN_SELF_TEST, this->m_PassThruExRunSelfTest, "PassThruExRunSelfTest");
 }
 
 long J2534DllWrapper::PassThruExWriteFlash ( void )
 {
-    long retval = ERR_NOT_SUPPORTED;
-
-    cn_cbor_errback cn_errback = {0};
-    cn_cbor* cb_map_root = cn_cbor_map_create(&cn_errback);
-
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_FuncName /* function */, ExPipeClient::KEY_PassThruExWriteFlash);
-
-    if (this->m_PassThruExWriteFlash) {
-        retval = this->m_PassThruExWriteFlash();
-        cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_RETVAL_LONG, retval);
-    } else {
-        //EXDBG_LOG << "Function " << __FUNCTION__ << " not found in DLL." << EXDBG_END;
-        cbor_utils::map_put_string(cb_map_root, ExPipeClient::KEY_Error, std::string("Function ").append(__FUNCTION__).append(" not found in DLL.").c_str());
-    }
-
-    this->_p_pipe->send({this->p_id, this->p_type, this->p_data_type, get_timestamp(), this->p_path, "PassThruExWriteFlash", cbor_utils::cbor_to_data(cb_map_root)});
-    cn_cbor_free(cb_map_root);
-    return retval;
+    return callVendor(j2534_pipe_VendorFunction_VENDOR_FUNCTION_EX_WRITE_FLASH, this->m_PassThruExWriteFlash, "PassThruExWriteFlash");
 }
 
 long J2534DllWrapper::PassThruLoadFirmware(void)
 {
-    long retval = ERR_NOT_SUPPORTED;
-
-    cn_cbor_errback cn_errback = {0};
-    cn_cbor* cb_map_root = cn_cbor_map_create(&cn_errback);
-
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_FuncName /* function */, ExPipeClient::KEY_PassThruLoadFirmware);
-
-    if (this->m_PassThruLoadFirmware) {
-        retval = this->m_PassThruLoadFirmware();
-        cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_RETVAL_LONG, retval);
-    } else {
-        //EXDBG_LOG << "Function " << __FUNCTION__ << " not found in DLL." << EXDBG_END;
-        cbor_utils::map_put_string(cb_map_root, ExPipeClient::KEY_Error, std::string("Function ").append(__FUNCTION__).append(" not found in DLL.").c_str());
-    }
-
-    this->_p_pipe->send({this->p_id, this->p_type, this->p_data_type, get_timestamp(), this->p_path, "PassThruLoadFirmware", cbor_utils::cbor_to_data(cb_map_root)});
-    cn_cbor_free(cb_map_root);
-    return retval;
+    return callVendor(j2534_pipe_VendorFunction_VENDOR_FUNCTION_LOAD_FIRMWARE, this->m_PassThruLoadFirmware, "PassThruLoadFirmware");
 }
 
 long J2534DllWrapper::PassThruRecoverFirmware(void)
 {
-    long retval = ERR_NOT_SUPPORTED;
-
-    cn_cbor_errback cn_errback = {0};
-    cn_cbor* cb_map_root = cn_cbor_map_create(&cn_errback);
-
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_FuncName /* function */, ExPipeClient::KEY_PassThruRecoverFirmware);
-
-    if (this->m_PassThruRecoverFirmware) {
-        retval = this->m_PassThruRecoverFirmware();
-        cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_RETVAL_LONG, retval);
-    } else {
-        //EXDBG_LOG << "Function " << __FUNCTION__ << " not found in DLL." << EXDBG_END;
-        cbor_utils::map_put_string(cb_map_root, ExPipeClient::KEY_Error, std::string("Function ").append(__FUNCTION__).append(" not found in DLL.").c_str());
-    }
-
-    this->_p_pipe->send({this->p_id, this->p_type, this->p_data_type, get_timestamp(), this->p_path, "PassThruRecoverFirmware", cbor_utils::cbor_to_data(cb_map_root)});
-    cn_cbor_free(cb_map_root);
-    return retval;
+    return callVendor(j2534_pipe_VendorFunction_VENDOR_FUNCTION_RECOVER_FIRMWARE, this->m_PassThruRecoverFirmware, "PassThruRecoverFirmware");
 }
 
 long J2534DllWrapper::PassThruReadIPSetup(unsigned long DeviceID, char *host_name, char *ip_addr, char *subnet_mask, char *gateway, char *dhcp_addr)
 {
     long retval = ERR_NOT_SUPPORTED;
 
-    cn_cbor_errback cn_errback = {0};
-    cn_cbor* cb_map_root = cn_cbor_map_create(&cn_errback);
-
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_FuncName /* function */, ExPipeClient::KEY_PassThruReadIPSetup);
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_Param1, DeviceID);
-    cbor_utils::map_put_string(cb_map_root, ExPipeClient::KEY_Param2, host_name);
-    cbor_utils::map_put_string(cb_map_root, ExPipeClient::KEY_Param3, ip_addr);
-    cbor_utils::map_put_string(cb_map_root, ExPipeClient::KEY_Param4, subnet_mask);
-    cbor_utils::map_put_string(cb_map_root, ExPipeClient::KEY_Param5, gateway);
-    cbor_utils::map_put_string(cb_map_root, ExPipeClient::KEY_Param6, dhcp_addr);
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_RX_TX, 0);
+    auto msg = message("PassThruReadIPSetup");
+    auto& call = msg.select(j2534_pipe_PipeMessage_read_ip_setup_tag, msg.msg().payload.read_ip_setup);
+    call.device_id = DeviceID;
 
     if (this->m_PassThruReadIPSetup) {
         retval = this->m_PassThruReadIPSetup(DeviceID, host_name, ip_addr, subnet_mask, gateway, dhcp_addr);
-        cbor_utils::map_put_string(cb_map_root, ExPipeClient::KEY_Param2, host_name);
-        cbor_utils::map_put_string(cb_map_root, ExPipeClient::KEY_Param3, ip_addr);
-        cbor_utils::map_put_string(cb_map_root, ExPipeClient::KEY_Param4, subnet_mask);
-        cbor_utils::map_put_string(cb_map_root, ExPipeClient::KEY_Param5, gateway);
-        cbor_utils::map_put_string(cb_map_root, ExPipeClient::KEY_Param6, dhcp_addr);
-        cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_RX_TX, 1);
-        cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_RETVAL_LONG, retval);
-
+        call.has_setup = true;
+        call.setup.host_name = msg.str(static_cast<const char*>(host_name));
+        call.setup.ip_addr = msg.str(static_cast<const char*>(ip_addr));
+        call.setup.subnet_mask = msg.str(static_cast<const char*>(subnet_mask));
+        call.setup.gateway = msg.str(static_cast<const char*>(gateway));
+        call.setup.dhcp_addr = msg.str(static_cast<const char*>(dhcp_addr));
+        msg.result(call, retval);
     } else {
-        //EXDBG_LOG << "Function " << __FUNCTION__ << " not found in DLL." << EXDBG_END;
-        cbor_utils::map_put_string(cb_map_root, ExPipeClient::KEY_Error, std::string("Function ").append(__FUNCTION__).append(" not found in DLL.").c_str());
+        msg.result(call, retval, not_found(__FUNCTION__));
     }
 
-    this->_p_pipe->send({this->p_id, this->p_type, this->p_data_type, get_timestamp(), this->p_path, "PassThruReadIPSetup", cbor_utils::cbor_to_data(cb_map_root)});
-    cn_cbor_free(cb_map_root);
+    send(msg);
     return retval;
 }
 
@@ -814,27 +554,24 @@ long J2534DllWrapper::PassThruWriteIPSetup(unsigned long DeviceID, char *host_na
 {
     long retval = ERR_NOT_SUPPORTED;
 
-    cn_cbor_errback cn_errback = {0};
-    cn_cbor* cb_map_root = cn_cbor_map_create(&cn_errback);
-
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_FuncName /* function */, ExPipeClient::KEY_PassThruWriteIPSetup);
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_Param1, DeviceID);
-    cbor_utils::map_put_string(cb_map_root, ExPipeClient::KEY_Param2, host_name);
-    cbor_utils::map_put_string(cb_map_root, ExPipeClient::KEY_Param3, ip_addr);
-    cbor_utils::map_put_string(cb_map_root, ExPipeClient::KEY_Param4, subnet_mask);
-    cbor_utils::map_put_string(cb_map_root, ExPipeClient::KEY_Param5, gateway);
-    cbor_utils::map_put_string(cb_map_root, ExPipeClient::KEY_Param6, dhcp_addr);
+    auto msg = message("PassThruWriteIPSetup");
+    auto& call = msg.select(j2534_pipe_PipeMessage_write_ip_setup_tag, msg.msg().payload.write_ip_setup);
+    call.device_id = DeviceID;
+    call.has_setup = true;
+    call.setup.host_name = msg.str(static_cast<const char*>(host_name));
+    call.setup.ip_addr = msg.str(static_cast<const char*>(ip_addr));
+    call.setup.subnet_mask = msg.str(static_cast<const char*>(subnet_mask));
+    call.setup.gateway = msg.str(static_cast<const char*>(gateway));
+    call.setup.dhcp_addr = msg.str(static_cast<const char*>(dhcp_addr));
 
     if (this->m_PassThruWriteIPSetup) {
         retval = this->m_PassThruWriteIPSetup(DeviceID, host_name, ip_addr, subnet_mask, gateway, dhcp_addr);
-        cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_RETVAL_LONG, retval);
+        msg.result(call, retval);
     } else {
-        //EXDBG_LOG << "Function " << __FUNCTION__ << " not found in DLL." << EXDBG_END;
-        cbor_utils::map_put_string(cb_map_root, ExPipeClient::KEY_Error, std::string("Function ").append(__FUNCTION__).append(" not found in DLL.").c_str());
+        msg.result(call, retval, not_found(__FUNCTION__));
     }
 
-    this->_p_pipe->send({this->p_id, this->p_type, this->p_data_type, get_timestamp(), this->p_path, "PassThruWriteIPSetup", cbor_utils::cbor_to_data(cb_map_root)});
-    cn_cbor_free(cb_map_root);
+    send(msg);
     return retval;
 }
 
@@ -842,27 +579,19 @@ long J2534DllWrapper::PassThruReadPCSetup(char *host_name, char *ip_addr)
 {
     long retval = ERR_NOT_SUPPORTED;
 
-    cn_cbor_errback cn_errback = {0};
-    cn_cbor* cb_map_root = cn_cbor_map_create(&cn_errback);
-
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_FuncName /* function */, ExPipeClient::KEY_PassThruReadPCSetup);
-    cbor_utils::map_put_string(cb_map_root, ExPipeClient::KEY_Param1, host_name);
-    cbor_utils::map_put_string(cb_map_root, ExPipeClient::KEY_Param2, ip_addr);
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_RX_TX, 0);
+    auto msg = message("PassThruReadPCSetup");
+    auto& call = msg.select(j2534_pipe_PipeMessage_read_pc_setup_tag, msg.msg().payload.read_pc_setup);
 
     if (this->m_PassThruReadPCSetup) {
         retval = this->m_PassThruReadPCSetup(host_name, ip_addr);
-        cbor_utils::map_put_string(cb_map_root, ExPipeClient::KEY_Param1, host_name);
-        cbor_utils::map_put_string(cb_map_root, ExPipeClient::KEY_Param2, ip_addr);
-        cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_RX_TX, 1);
-        cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_RETVAL_LONG, retval);
+        call.host_name = msg.str(static_cast<const char*>(host_name));
+        call.ip_addr = msg.str(static_cast<const char*>(ip_addr));
+        msg.result(call, retval);
     } else {
-        //EXDBG_LOG << "Function " << __FUNCTION__ << " not found in DLL." << EXDBG_END;
-        cbor_utils::map_put_string(cb_map_root, ExPipeClient::KEY_Error, std::string("Function ").append(__FUNCTION__).append(" not found in DLL.").c_str());
+        msg.result(call, retval, not_found(__FUNCTION__));
     }
 
-    this->_p_pipe->send({this->p_id, this->p_type, this->p_data_type, get_timestamp(), this->p_path, "PassThruReadPCSetup", cbor_utils::cbor_to_data(cb_map_root)});
-    cn_cbor_free(cb_map_root);
+    send(msg);
     return retval;
 }
 
@@ -870,24 +599,18 @@ long J2534DllWrapper::PassThruGetPointer(long vb_pointer)
 {
     long retval = ERR_NOT_SUPPORTED;
 
-    cn_cbor_errback cn_errback = {0};
-    cn_cbor* cb_map_root = cn_cbor_map_create(&cn_errback);
-
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_FuncName /* function */, ExPipeClient::KEY_PassThruGetPointer);
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_Param1, vb_pointer);
+    auto msg = message("PassThruGetPointer");
+    auto& call = msg.select(j2534_pipe_PipeMessage_get_pointer_tag, msg.msg().payload.get_pointer);
+    call.vb_pointer = vb_pointer;
 
     if (this->m_PassThruGetPointer) {
         retval = this->m_PassThruGetPointer(vb_pointer);
-        cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_Param1, vb_pointer);
-        cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_RX_TX, 1);
-        cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_RETVAL_LONG, retval);
+        msg.result(call, retval);
     } else {
-        //EXDBG_LOG << "Function " << __FUNCTION__ << " not found in DLL." << EXDBG_END;
-        cbor_utils::map_put_string(cb_map_root, ExPipeClient::KEY_Error, std::string("Function ").append(__FUNCTION__).append(" not found in DLL.").c_str());
+        msg.result(call, retval, not_found(__FUNCTION__));
     }
 
-    this->_p_pipe->send({this->p_id, this->p_type, this->p_data_type, get_timestamp(), this->p_path, "PassThruGetPointer", cbor_utils::cbor_to_data(cb_map_root)});
-    cn_cbor_free(cb_map_root);
+    send(msg);
     return retval;
 }
 
@@ -895,40 +618,21 @@ long J2534DllWrapper::PassThruGetNextCarDAQ(char **name, unsigned long *version,
 {
     long retval = ERR_NOT_SUPPORTED;
 
-    cn_cbor_errback cn_errback = {0};
-    cn_cbor* cb_map_root = cn_cbor_map_create(&cn_errback);
-
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_FuncName /* function */, ExPipeClient::KEY_PassThruGetNextCarDAQ);
-    cbor_utils::map_put_string(cb_map_root, ExPipeClient::KEY_Param1, "");
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_Param2, *version);
-    cbor_utils::map_put_string(cb_map_root, ExPipeClient::KEY_Param3, "");
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_RX_TX, 0);
+    auto msg = message("PassThruGetNextCarDAQ");
+    auto& call = msg.select(j2534_pipe_PipeMessage_get_next_cardaq_tag, msg.msg().payload.get_next_cardaq);
 
     if (this->m_PassThruGetNextCarDAQ) {
         retval = this->m_PassThruGetNextCarDAQ(name, version, addr);
-
-        if(name == NULL)
-        {
-            cbor_utils::map_put_string(cb_map_root, ExPipeClient::KEY_Param1, "");
-            cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_Param2, *version);
-            cbor_utils::map_put_string(cb_map_root, ExPipeClient::KEY_Param3, "");
-        }
-        else
-        {
-            cbor_utils::map_put_string(cb_map_root, ExPipeClient::KEY_Param1, *name);
-            cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_Param2, *version);
-            cbor_utils::map_put_string(cb_map_root, ExPipeClient::KEY_Param3, *addr);
-        }
-
-        cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_RX_TX, 1);
-        cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_RETVAL_LONG, retval);
+        // *name is null once there are no more devices.
+        if (name) call.name = msg.str(static_cast<const char*>(*name));
+        if (version) call.version = *version;
+        if (addr) call.addr = msg.str(static_cast<const char*>(*addr));
+        msg.result(call, retval);
     } else {
-        //EXDBG_LOG << "Function " << __FUNCTION__ << " not found in DLL." << EXDBG_END;
-        cbor_utils::map_put_string(cb_map_root, ExPipeClient::KEY_Error, std::string("Function ").append(__FUNCTION__).append(" not found in DLL.").c_str());
+        msg.result(call, retval, not_found(__FUNCTION__));
     }
 
-    this->_p_pipe->send({this->p_id, this->p_type, this->p_data_type, get_timestamp(), this->p_path, "PassThruGetNextCarDAQ", cbor_utils::cbor_to_data(cb_map_root)});
-    cn_cbor_free(cb_map_root);
+    send(msg);
     return retval;
 }
 
@@ -937,25 +641,18 @@ long J2534DllWrapper::PassThruScanForDevices(unsigned long *pDeviceCount)
 {
     long retval = ERR_NOT_SUPPORTED;
 
-    cn_cbor_errback cn_errback = {0};
-    cn_cbor* cb_map_root = cn_cbor_map_create(&cn_errback);
-
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_FuncName /* function */, ExPipeClient::KEY_PassThruScanForDevices);
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_Param1, *pDeviceCount);
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_RX_TX, 0);
+    auto msg = message("PassThruScanForDevices");
+    auto& call = msg.select(j2534_pipe_PipeMessage_scan_for_devices_tag, msg.msg().payload.scan_for_devices);
 
     if (this->m_PassThruScanForDevices) {
         retval = this->m_PassThruScanForDevices(pDeviceCount);
-        cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_Param1, *pDeviceCount);
-        cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_RX_TX, 1);
-        cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_RETVAL_LONG, retval);
+        if (pDeviceCount) call.device_count = *pDeviceCount;
+        msg.result(call, retval);
     } else {
-        //EXDBG_LOG << "Function " << __FUNCTION__ << " not found in DLL." << EXDBG_END;
-        cbor_utils::map_put_string(cb_map_root, ExPipeClient::KEY_Error, std::string("Function ").append(__FUNCTION__).append(" not found in DLL.").c_str());
+        msg.result(call, retval, not_found(__FUNCTION__));
     }
 
-    this->_p_pipe->send({this->p_id, this->p_type, this->p_data_type, get_timestamp(), this->p_path, "PassThruScanForDevices", cbor_utils::cbor_to_data(cb_map_root)});
-    cn_cbor_free(cb_map_root);
+    send(msg);
     return retval;
 }
 
@@ -963,29 +660,27 @@ long J2534DllWrapper::PassThruGetNextDevice(SDEVICE *psDevice)
 {
     long retval = ERR_NOT_SUPPORTED;
 
-    cn_cbor_errback cn_errback = {0};
-    cn_cbor* cb_map_root = cn_cbor_map_create(&cn_errback);
-    SDEVICE _tmp_sdev = {{0}};
-    memset(&_tmp_sdev, 0, sizeof(SDEVICE));
-
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_FuncName /* function */, ExPipeClient::KEY_PassThruGetNextDevice);
-    cbor_utils::map_put_data(cb_map_root, ExPipeClient::KEY_Param1, (const uint8_t *)&_tmp_sdev, sizeof(SDEVICE));
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_RX_TX, 0);
+    auto msg = message("PassThruGetNextDevice");
+    auto& call = msg.select(j2534_pipe_PipeMessage_get_next_device_tag, msg.msg().payload.get_next_device);
 
     if (this->m_PassThruGetNextDevice) {
         retval = this->m_PassThruGetNextDevice(psDevice);
-        if(psDevice == NULL)cbor_utils::map_put_data(cb_map_root, ExPipeClient::KEY_Param1, (const uint8_t *)&_tmp_sdev, sizeof(SDEVICE));
-        else cbor_utils::map_put_data(cb_map_root, ExPipeClient::KEY_Param1, (const uint8_t *)psDevice, sizeof(SDEVICE));
-
-        cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_RX_TX, 1);
-        cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_RETVAL_LONG, retval);
+        if (psDevice) {
+            call.has_device = true;
+            call.device.name = msg.str(bounded(psDevice->DeviceName, sizeof(psDevice->DeviceName)));
+            call.device.available = psDevice->DeviceAvailable;
+            call.device.dll_fw_status = psDevice->DeviceDLLFWStatus;
+            call.device.connect_media = psDevice->DeviceConnectMedia;
+            call.device.connect_speed = psDevice->DeviceConnectSpeed;
+            call.device.signal_quality = psDevice->DeviceSignalQuality;
+            call.device.signal_strength = psDevice->DeviceSignalStrength;
+        }
+        msg.result(call, retval);
     } else {
-        //EXDBG_LOG << "Function " << __FUNCTION__ << " not found in DLL." << EXDBG_END;
-        cbor_utils::map_put_string(cb_map_root, ExPipeClient::KEY_Error, std::string("Function ").append(__FUNCTION__).append(" not found in DLL.").c_str());
+        msg.result(call, retval, not_found(__FUNCTION__));
     }
 
-    this->_p_pipe->send({this->p_id, this->p_type, this->p_data_type, get_timestamp(), this->p_path, "PassThruGetNextDevice", cbor_utils::cbor_to_data(cb_map_root)});
-    cn_cbor_free(cb_map_root);
+    send(msg);
     return retval;
 }
 
@@ -993,24 +688,23 @@ long J2534DllWrapper::PassThruSelect(SCHANNELSET *ChannelSetPtr, unsigned long S
 {
     long retval = ERR_NOT_SUPPORTED;
 
-    cn_cbor_errback cn_errback = {0};
-    cn_cbor* cb_map_root = cn_cbor_map_create(&cn_errback);
-
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_FuncName /* function */, ExPipeClient::KEY_PassThruSelect);
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_Param1, 0);
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_Param2, SelectType);
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_Param3, Timeout);
+    auto msg = message("PassThruSelect");
+    auto& call = msg.select(j2534_pipe_PipeMessage_select_tag, msg.msg().payload.select);
+    if (ChannelSetPtr) {
+        call.channel_ids = msg.uint32_list(ChannelSetPtr->ChannelList, ChannelSetPtr->ChannelCount);
+        call.channel_threshold = ChannelSetPtr->ChannelThreshold;
+    }
+    call.select_type = SelectType;
+    call.timeout = Timeout;
 
     if (this->m_PassThruSelect) {
         retval = this->m_PassThruSelect(ChannelSetPtr, SelectType, Timeout);
-        cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_RETVAL_LONG, retval);
+        msg.result(call, retval);
     } else {
-        //EXDBG_LOG << "Function " << __FUNCTION__ << " not found in DLL." << EXDBG_END;
-        cbor_utils::map_put_string(cb_map_root, ExPipeClient::KEY_Error, std::string("Function ").append(__FUNCTION__).append(" not found in DLL.").c_str());
+        msg.result(call, retval, not_found(__FUNCTION__));
     }
 
-    this->_p_pipe->send({this->p_id, this->p_type, this->p_data_type, get_timestamp(), this->p_path, "PassThruSelect", cbor_utils::cbor_to_data(cb_map_root)});
-    cn_cbor_free(cb_map_root);
+    send(msg);
     return retval;
 }
 
@@ -1018,24 +712,18 @@ long J2534DllWrapper::PassThruReadDetails(unsigned long* pName)
 {
     long retval = ERR_NOT_SUPPORTED;
 
-    cn_cbor_errback cn_errback = {0};
-    cn_cbor* cb_map_root = cn_cbor_map_create(&cn_errback);
-
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_FuncName /* function */, ExPipeClient::KEY_PassThruSelect);
-    cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_Param1, *pName);
+    auto msg = message("PassThruReadDetails");
+    auto& call = msg.select(j2534_pipe_PipeMessage_read_details_tag, msg.msg().payload.read_details);
+    if (pName) call.name = *pName;
 
     if (this->m_PassThruReadDetails) {
         retval = this->m_PassThruReadDetails(pName);
-        cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_Param1, *pName);
-        cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_RX_TX, 1);
-        cbor_utils::map_put_int(cb_map_root, ExPipeClient::KEY_RETVAL_LONG, retval);
+        if (pName) call.name = *pName;
+        msg.result(call, retval);
     } else {
-        //EXDBG_LOG << "Function " << __FUNCTION__ << " not found in DLL." << EXDBG_END;
-        cbor_utils::map_put_string(cb_map_root, ExPipeClient::KEY_Error, std::string("Function ").append(__FUNCTION__).append(" not found in DLL.").c_str());
+        msg.result(call, retval, not_found(__FUNCTION__));
     }
 
-    this->_p_pipe->send({this->p_id, this->p_type, this->p_data_type, get_timestamp(), this->p_path, "PassThruSelect", cbor_utils::cbor_to_data(cb_map_root)});
-    cn_cbor_free(cb_map_root);
+    send(msg);
     return retval;
 }
-

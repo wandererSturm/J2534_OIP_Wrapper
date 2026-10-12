@@ -1,15 +1,11 @@
 #include "exj2534cannelloni.h"
 #include "defs.h"
+#include "pipecapture.h"
 #include <QTimer>
-#include <QCborValue>
-#include <QCborMap>
-#include <QCborArray>
-#include <QJsonValue>
-#include <QJsonArray>
-#include <QJsonDocument>
-#include <QJsonObject>
+#include <QDateTime>
 #include <QGuiApplication>
-#include <QFile>
+#include <QDir>
+#include <QSettings>
 
 ExJ2534Cannelloni::ExJ2534Cannelloni(QObject * parent):QAbstractListModel(parent)
 {
@@ -52,105 +48,111 @@ ExJ2534Cannelloni * ExJ2534Cannelloni::create(QQmlEngine *, QJSEngine *engine)
 
 void ExJ2534Cannelloni::processPipeMessage(PipeMessage msg)
 {
-    if(msg.timestamp == 0)msg.timestamp = QDateTime::currentDateTime().toMSecsSinceEpoch();
-    auto obj = new TimestampedObject{msg.timestamp, msg};
+    if(msg.timestampMs() == 0)msg.setTimestampMs(QDateTime::currentDateTime().toMSecsSinceEpoch());
+    auto obj = new TimestampedObject{msg.timestampMs(), msg};
 
     bool proceeded = false;
 
-    if(msg.data_type == 2)
-    {
-        auto cbor = QCborValue::fromCbor(msg.data).toMap();
-        qDbg() << "[FuncName] " << cbor.value(PipeMessage::KEY_FuncName).toInteger(-1) << QCborValue::fromCbor(msg.data);
+    qDbg() << "[Payload] " << msg.payloadField();
 
-        switch(cbor.value(PipeMessage::KEY_FuncName).toInteger(-1))
+    switch(msg.payloadField())
+    {
+    case PipePayload::Open:
         {
-        case PipeMessage::KEY_PassThruOpen:
+            proceeded = true;
+            const auto &open = msg.open();
+            obj->data = QString("pName = ") + open.name() + " pDeviceID = " + QString::number(quint32(open.deviceId()));
+            if(!open.result().error().isEmpty())
             {
-                proceeded = true;
-                auto pName = cbor.value(PipeMessage::KEY_Param1).toString();
-                qint32 pDeviceID = cbor.value(PipeMessage::KEY_Param2).toInteger(0);
-                obj->data = QString("pName = ")+pName+" pDeviceID = " + QString::number(pDeviceID);
-                qDbg() << "[OPEN] " << obj->data;
-                QTimer::singleShot(0,[this, obj]{this->addElement(obj);});
+                obj->hasError = true;
+                obj->data += " error = " + open.result().error();
             }
-            break;
-        case PipeMessage::KEY_PassThruReadMsgs:
-            proceeded = true;
-            this->p_read_msgs->processPipeMessage(msg);
-            break;
-        case PipeMessage::KEY_PassThruWriteMsgs:
-            proceeded = true;
-            this->p_write_msgs->processPipeMessage(msg);
-            break;
+            qDbg() << "[OPEN] " << obj->data;
+            QTimer::singleShot(0,[this, obj]{this->addElement(obj);});
         }
+        break;
+    case PipePayload::ReadMsgs:
+        proceeded = true;
+        this->p_read_msgs->processPipeMessage(msg);
+        break;
+    case PipePayload::WriteMsgs:
+        proceeded = true;
+        this->p_write_msgs->processPipeMessage(msg);
+        break;
+    default:
+        break;
     }
 
     if(!proceeded)
     {
-        qDbg() << "[ExJ2534Cannelloni] MSG NOT PROCEEDED! data_type " << msg.data_type << QCborValue::fromCbor(msg.data);
+        qDbg() << "[ExJ2534Cannelloni] MSG NOT PROCEEDED! payload " << msg.payloadField() << msg.text();
         QTimer::singleShot(0,[this, obj]{this->addElement(obj);});
     }
 }
 
 
-void ExJ2534Cannelloni::exportToJSON()
+QString ExJ2534Cannelloni::exportToJSON()
 {
-    QJsonDocument doc;
-    QJsonArray arr;
-    for(auto it: this->p_objs)
-    {
-        arr.append(
-            QJsonObject
-            {
-             {"id", (qint64)it->msg.id},
-             {"data_type", (qint64)it->msg.data_type},
-             {"type", (qint64)it->msg.type},
-             {"timestamp", (qint64)it->msg.timestamp},
-             {"path", it->msg.path},
-             {"message", it->msg.message},
-             {"data", QCborValue::fromCbor(it->msg.data).toJsonValue()},
-             }
-            );
-    }
-    doc.setArray(arr);
+    QList<PipeMessage> messages;
+    for(auto it: this->p_objs)messages.append(it->msg);
 
     auto path = QGuiApplication::instance()->applicationDirPath().append(QStringLiteral("\\export.json"));
-    QFile file(path);
-    if(file.open(QFile::WriteOnly))
+    QString error;
+    if(!PipeCapture::save(path, messages, &error))
     {
-        file.write(doc.toJson());
-        file.close();
+        qWarning() << "[ExJ2534Cannelloni] export failed:" << error;
+        return {};
     }
+    return QDir::toNativeSeparators(path);
 }
 
-void ExJ2534Cannelloni::loadFromJSON(QString fpath)
+// Same key and defaults as J2534CannelloniClient::getDefaults() in the DLL.
+QString ExJ2534Cannelloni::settingsLocation() const
+{
+    return QStringLiteral("HKEY_LOCAL_MACHINE\\SOFTWARE\\WOW6432Node\\PassThruSupport.04.04\\XplatformsPassThruOverIP");
+}
+
+bool ExJ2534Cannelloni::settingsFound() const
+{
+    QSettings s(settingsLocation(), QSettings::NativeFormat);
+    return s.contains(QStringLiteral("DefaultHost")) || s.contains(QStringLiteral("DefaultPort"))
+        || s.contains(QStringLiteral("CannelloniDataVersion"));
+}
+
+QString ExJ2534Cannelloni::defaultHost() const
+{
+    QSettings s(settingsLocation(), QSettings::NativeFormat);
+    return s.value(QStringLiteral("DefaultHost"), QStringLiteral("127.0.0.1")).toString();
+}
+
+int ExJ2534Cannelloni::defaultPort() const
+{
+    QSettings s(settingsLocation(), QSettings::NativeFormat);
+    return s.value(QStringLiteral("DefaultPort"), 20000).toInt();
+}
+
+int ExJ2534Cannelloni::dataVersion() const
+{
+    QSettings s(settingsLocation(), QSettings::NativeFormat);
+    return s.value(QStringLiteral("CannelloniDataVersion"), 1).toInt();
+}
+
+bool ExJ2534Cannelloni::loadFromJSON(QString fpath)
 {
     QString path;
     if(!fpath.isEmpty())path = fpath;
     else path = QGuiApplication::instance()->applicationDirPath().append(QStringLiteral("\\export.json"));
 
-    QFile file(path);
-    if(file.open(QFile::ReadOnly))
+    QList<PipeMessage> messages;
+    QString error;
+    if(!PipeCapture::load(path, &messages, &error))
     {
-        QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
-        file.close();
-
-        auto arr = doc.array();
-        for(auto it: arr)
-        {
-            PipeMessage pmsg;
-            auto obj = it.toObject();
-            pmsg.id = obj.value("id").toInteger();
-            pmsg.data_type = obj.value("data_type").toInteger();
-            pmsg.type = obj.value("type").toInteger();
-            pmsg.timestamp = obj.value("timestamp").toInteger();
-            pmsg.path = obj.value("path").toString();
-            pmsg.message = obj.value("message").toString();
-            pmsg.data = QCborValue::fromJsonValue(obj.value("data")).toCbor();
-
-            this->processPipeMessage(pmsg);
-        }
+        qWarning() << "[ExJ2534Cannelloni] load failed:" << error;
+        return false;
     }
+
+    for(const auto &pmsg: messages)this->processPipeMessage(pmsg);
+    return true;
 }
 
 void ExJ2534Cannelloni::addElement(TimestampedObject * obj)
@@ -184,11 +186,11 @@ QVariant ExJ2534Cannelloni::data(const QModelIndex & index, int role) const
 
     switch (role) {
     case ID:
-        return obj->msg.id;
+        return quint32(obj->msg.clientId());
     case Timestamp:
         return QDateTime::fromMSecsSinceEpoch(obj->timestamp).toString("hh:mm:ss.zzz");
     case Message:
-        return obj->msg.message;
+        return obj->msg.text();
     case DATA:
         return obj->data;
     }

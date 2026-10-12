@@ -1,7 +1,5 @@
 #include <Windows.h>
 #include "ExDbg.h"
-#include "j2534.h"
-#include "exj2534oipsocks.h"
 #include "j2534dllwrapper.h"
 #include "j2534simplelogger.h"
 #include "j2534emulator.h"
@@ -11,9 +9,10 @@
 void init_console()
 {
   AllocConsole();
-  freopen("CONIN$", "r", stdin);
-  freopen("CONOUT$", "w", stdout);
-  freopen("CONOUT$", "w", stderr);
+  FILE* stream = nullptr;
+  freopen_s(&stream, "CONIN$", "r", stdin);
+  freopen_s(&stream, "CONOUT$", "w", stdout);
+  freopen_s(&stream, "CONOUT$", "w", stderr);
 }
 
 
@@ -95,7 +94,7 @@ BOOL WINAPI DllMain(HINSTANCE hInstDll, DWORD dwReason, LPVOID lpvReserved) {
       char lpFilename[52600] = {0};
       GetModuleFileNameA((HMODULE)hInstDll, (LPSTR)&lpFilename, 52600 );
       {
-          printf("LoadModule: %08x %s\n",lpvReserved, lpFilename);
+          printf("LoadModule: %p %s\n",lpvReserved, lpFilename);
       }
 
       uint32_t pid = GetCurrentProcessId();

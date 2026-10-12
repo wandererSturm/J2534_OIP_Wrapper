@@ -1,5 +1,4 @@
 #include "ExPipeClient.h"
-#include <cn-cbor/cn-cbor.h>
 #include <future>
 #include <chrono>
 
@@ -98,99 +97,31 @@ void ExPipeClient::disconnect() {
     }
 }
 
-void ExPipeClient::send(const ExPipeClient::Message& msg)
+void ExPipeClient::send(PipeMessageBuilder& message)
 {
-    cn_cbor_errback cn_errback = {0};
-    cn_cbor* cb = cn_cbor_map_create(&cn_errback);
-
-    cn_cbor_map_put(cb, cn_cbor_string_create("id", &cn_errback), cn_cbor_int_create(msg.id, &cn_errback), &cn_errback);
-    cn_cbor_map_put(cb, cn_cbor_string_create("type", &cn_errback), cn_cbor_int_create(msg.type, &cn_errback), &cn_errback);
-    cn_cbor_map_put(cb, cn_cbor_string_create("data_type", &cn_errback), cn_cbor_int_create(msg.data_type, &cn_errback), &cn_errback);
-    cn_cbor_map_put(cb, cn_cbor_string_create("timestamp", &cn_errback), cn_cbor_int_create(msg.timestamp, &cn_errback), &cn_errback);
-    cn_cbor_map_put(cb, cn_cbor_string_create("path", &cn_errback), cn_cbor_string_create(msg.path.c_str(), &cn_errback), &cn_errback);
-    cn_cbor_map_put(cb, cn_cbor_string_create("message", &cn_errback), cn_cbor_string_create(msg.message.c_str(), &cn_errback), &cn_errback);
-    cn_cbor_map_put(cb, cn_cbor_string_create("data", &cn_errback), cn_cbor_data_create(reinterpret_cast<const uint8_t*>(msg.data.data()), msg.data.size(), &cn_errback), &cn_errback);
-
-    auto cbor_size = cn_cbor_encoder_write(nullptr, 0, 0, cb);
-    if(cbor_size != -1)
-    {
-        uint8_t * cbor = new uint8_t[cbor_size];
-        memset(cbor,0,cbor_size);
-        cn_cbor_encoder_write(cbor, 0, cbor_size, cb);
-
-        // Write the message length (as a 4-byte integer) before the message
-        DWORD bytesWritten;
-        int size = static_cast<int>(cbor_size);
-        if (!WriteFile(pipe, &size, sizeof(size), &bytesWritten, nullptr) ||
-            bytesWritten != sizeof(size)) {
-            // Handle error
-            printf("Can't WRITE SIZE TO PIPE!!!!");
-            delete[] cbor;
-            return;
-        }
-
-        // Write the message
-        if (!WriteFile(pipe, cbor, cbor_size, &bytesWritten, nullptr) ||
-            bytesWritten != cbor_size) {
-            // Handle error
-            printf("Can't WRITE TO PIPE!!!!");
-        }
-
-        delete[] cbor;
+    const auto encoded = message.encode();
+    if (encoded.empty()) {
+        printf("ExPipeClient: failed to encode pipe message\n");
+        return;
     }
+    writeFrame(encoded.data(), static_cast<uint32_t>(encoded.size()));
 }
 
-
-ExPipeClient::Message ExPipeClient::receive()
+// Frame: little-endian int32 byte length, then the payload.
+bool ExPipeClient::writeFrame(const uint8_t* data, uint32_t size)
 {
-    DWORD bytesRead;
-    DWORD bytesAvailable;
+    if (pipe == INVALID_HANDLE_VALUE)
+        return false;
 
-    // Check how many bytes are available to be read
-    if (!PeekNamedPipe(pipe, NULL, 0, NULL, &bytesAvailable, NULL)) {
-        // Handle error
+    DWORD bytesWritten = 0;
+    const int32_t length = static_cast<int32_t>(size);
+    if (!WriteFile(pipe, &length, sizeof(length), &bytesWritten, nullptr) || bytesWritten != sizeof(length)) {
+        printf("ExPipeClient: can't write frame length to pipe\n");
+        return false;
     }
-
-    // If not enough bytes are available to read the size of the message, return an empty message
-    if (bytesAvailable < sizeof(int)) {
-        return ExPipeClient::Message{};
+    if (!WriteFile(pipe, data, size, &bytesWritten, nullptr) || bytesWritten != size) {
+        printf("ExPipeClient: can't write frame to pipe\n");
+        return false;
     }
-
-    int size;
-    if (!ReadFile(pipe, &size, sizeof(size), &bytesRead, nullptr) || bytesRead != sizeof(size))
-    {
-        // Handle error
-    }
-
-    // Check again how many bytes are available to be read
-    if (!PeekNamedPipe(pipe, NULL, 0, NULL, &bytesAvailable, NULL))
-    {
-        // Handle error
-    }
-
-    // If not enough bytes are available to read the message, return an empty message
-    if (bytesAvailable < size)
-    {
-        return ExPipeClient::Message{};
-    }
-
-    std::vector<char> buffer(size);
-    if (!ReadFile(pipe, buffer.data(), size, &bytesRead, nullptr) || bytesRead != size)
-    {
-        // Handle error
-    }
-
-    cn_cbor_errback errp;
-    cn_cbor* cb = cn_cbor_decode((const uint8_t*)buffer.data(), bytesRead, &errp);
-    ExPipeClient::Message msg;
-    msg.path = cn_cbor_mapget_string(cb, "path")->v.str;
-    msg.id = cn_cbor_mapget_string(cb, "id")->v.sint;
-    msg.type = cn_cbor_mapget_string(cb, "type")->v.sint;
-    msg.message = cn_cbor_mapget_string(cb, "message")->v.str;
-    cn_cbor* data_cb = cn_cbor_mapget_string(cb, "data");
-    msg.data = std::vector<uint8_t>(data_cb->v.str, data_cb->v.str + data_cb->length);
-
-    return msg;
+    return true;
 }
-
-

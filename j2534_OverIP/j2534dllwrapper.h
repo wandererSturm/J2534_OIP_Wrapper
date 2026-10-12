@@ -91,55 +91,57 @@ public:
 
 private:
     template <typename FunctionType>
-    FunctionType loadFunction(const char* functionName, cn_cbor * cb_map = nullptr);
+    FunctionType loadFunction(const char* functionName, std::vector<PipeMessageBuilder::DllFunction>* report = nullptr);
+    PipeMessageBuilder message(std::string text = {});
+    // Parameterless vendor functions share one message type.
+    long callVendor(j2534_pipe_VendorFunction function, long (CALLBACK *fn)(void), const char* name);
+    void send(PipeMessageBuilder& message);
     std::unique_ptr<HMODULE, DllDeleter> m_dllHandle;
 
 private:
-    PTOPEN m_PassThruOpen;
-    PTCLOSE m_PassThruClose;
-    PTCONNECT m_PassThruConnect;
-    PTDISCONNECT m_PassThruDisconnect;
-    PTREADMSGS m_PassThruReadMsgs;
-    PTWRITEMSGS m_PassThruWriteMsgs;
-    PTSTARTPERIODICMSG m_PassThruStartPeriodicMsg;
-    PTSTOPPERIODICMSG m_PassThruStopPeriodicMsg;
-    PTSTARTMSGFILTER m_PassThruStartMsgFilter;
-    PTSTOPMSGFILTER m_PassThruStopMsgFilter;
-    PTSETPROGRAMMINGVOLTAGE m_PassThruSetProgrammingVoltage;
-    PTREADVERSION m_PassThruReadVersion;
-    PTGETLASTERROR m_PassThruGetLastError;
-    PTIOCTL m_PassThruIoctl;
+    PTOPEN m_PassThruOpen = nullptr;
+    PTCLOSE m_PassThruClose = nullptr;
+    PTCONNECT m_PassThruConnect = nullptr;
+    PTDISCONNECT m_PassThruDisconnect = nullptr;
+    PTREADMSGS m_PassThruReadMsgs = nullptr;
+    PTWRITEMSGS m_PassThruWriteMsgs = nullptr;
+    PTSTARTPERIODICMSG m_PassThruStartPeriodicMsg = nullptr;
+    PTSTOPPERIODICMSG m_PassThruStopPeriodicMsg = nullptr;
+    PTSTARTMSGFILTER m_PassThruStartMsgFilter = nullptr;
+    PTSTOPMSGFILTER m_PassThruStopMsgFilter = nullptr;
+    PTSETPROGRAMMINGVOLTAGE m_PassThruSetProgrammingVoltage = nullptr;
+    PTREADVERSION m_PassThruReadVersion = nullptr;
+    PTGETLASTERROR m_PassThruGetLastError = nullptr;
+    PTIOCTL m_PassThruIoctl = nullptr;
 
-    PTEXCONFIGWIFI m_PassThruExConfigureWiFi;
-    PTEXDEVWATCHDOG m_PassThruExDeviceWatchdog;
-    PTEXDLCYPHFLASHDATA m_PassThruExDownloadCypheredFlashData;
-    PTEXERASEFLASH m_PassThruExEraseFlash;
-    PTEXINITCYPHFLASHDL m_PassThruExInitiateCypheredFlashDownload;
-    PTEXREADFLASH m_PassThruExReadFlash;
-    PTEXRESETFLASH m_PassThruExResetFlash;
-    PTEXRINSELFTEST m_PassThruExRunSelfTest;
-    PTEXWRITEFLASH m_PassThruExWriteFlash;
-    PTLOADFIRMWARE m_PassThruLoadFirmware;
-    PTRECOVERFIRMWARE m_PassThruRecoverFirmware;
-    PTREADIPSETUP m_PassThruReadIPSetup;
-    PTWRITEIPSETUP m_PassThruWriteIPSetup;
-    PTREADPCSETUP m_PassThruReadPCSetup;
-    PTGETPOINTER m_PassThruGetPointer;
-    PTGETNEXTCARDAQ m_PassThruGetNextCarDAQ;
+    PTEXCONFIGWIFI m_PassThruExConfigureWiFi = nullptr;
+    PTEXDEVWATCHDOG m_PassThruExDeviceWatchdog = nullptr;
+    PTEXDLCYPHFLASHDATA m_PassThruExDownloadCypheredFlashData = nullptr;
+    PTEXERASEFLASH m_PassThruExEraseFlash = nullptr;
+    PTEXINITCYPHFLASHDL m_PassThruExInitiateCypheredFlashDownload = nullptr;
+    PTEXREADFLASH m_PassThruExReadFlash = nullptr;
+    PTEXRESETFLASH m_PassThruExResetFlash = nullptr;
+    PTEXRINSELFTEST m_PassThruExRunSelfTest = nullptr;
+    PTEXWRITEFLASH m_PassThruExWriteFlash = nullptr;
+    PTLOADFIRMWARE m_PassThruLoadFirmware = nullptr;
+    PTRECOVERFIRMWARE m_PassThruRecoverFirmware = nullptr;
+    PTREADIPSETUP m_PassThruReadIPSetup = nullptr;
+    PTWRITEIPSETUP m_PassThruWriteIPSetup = nullptr;
+    PTREADPCSETUP m_PassThruReadPCSetup = nullptr;
+    PTGETPOINTER m_PassThruGetPointer = nullptr;
+    PTGETNEXTCARDAQ m_PassThruGetNextCarDAQ = nullptr;
 
-    PTSCANFORDEVICES m_PassThruScanForDevices;
-    PTGETNEXTDEV m_PassThruGetNextDevice;
-    PTSELECT m_PassThruSelect;
-    PTREADDETAILS m_PassThruReadDetails;
+    PTSCANFORDEVICES m_PassThruScanForDevices = nullptr;
+    PTGETNEXTDEV m_PassThruGetNextDevice = nullptr;
+    PTSELECT m_PassThruSelect = nullptr;
+    PTREADDETAILS m_PassThruReadDetails = nullptr;
 
-    PTQUEUEMSGS m_PassThruQueueMsgs;
+    PTQUEUEMSGS m_PassThruQueueMsgs = nullptr;
 
 private:
     ExPipeClient *          _p_pipe;
     std::string             p_path;
     uint32_t                p_id;
-    uint32_t                p_type;
-    uint32_t                p_data_type;
 
 };
 

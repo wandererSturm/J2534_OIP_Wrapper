@@ -16,6 +16,13 @@ class ExJ2534Cannelloni : public QAbstractListModel
     QML_NAMED_ELEMENT(ExJ2534Cannelloni)
     QML_SINGLETON
 
+    // Cannelloni settings the DLL reads from the registry (read-only here).
+    Q_PROPERTY(bool settingsFound READ settingsFound CONSTANT FINAL)
+    Q_PROPERTY(QString defaultHost READ defaultHost CONSTANT FINAL)
+    Q_PROPERTY(int defaultPort READ defaultPort CONSTANT FINAL)
+    Q_PROPERTY(int dataVersion READ dataVersion CONSTANT FINAL)
+    Q_PROPERTY(QString settingsLocation READ settingsLocation CONSTANT FINAL)
+
 public:
     enum ElemRoles
     {
@@ -35,8 +42,15 @@ public:
     Q_INVOKABLE ExJ2534ReadMsgsList * getReadMsgsList(){return this->p_read_msgs;}
     Q_INVOKABLE ExJ2534WriteMsgsList * getWriteMsgsList(){return this->p_write_msgs;}
 
-    Q_INVOKABLE void exportToJSON();
-    Q_INVOKABLE void loadFromJSON(QString fpath);
+    // Returns the path written, or an empty string on failure.
+    Q_INVOKABLE QString exportToJSON();
+    Q_INVOKABLE bool loadFromJSON(QString fpath);
+
+    bool settingsFound() const;
+    QString defaultHost() const;
+    int defaultPort() const;
+    int dataVersion() const;
+    QString settingsLocation() const;
 
 
 public slots:

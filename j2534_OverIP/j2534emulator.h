@@ -56,11 +56,14 @@ public:
     long PassThruQueueMsgs(unsigned long ChannelID, PASSTHRU_MSG *pMsg, unsigned long *pNumMsgs);
 
 private:
+    PipeMessageBuilder message(std::string text = {});
+    void send(PipeMessageBuilder& message);
+    // Text-only message, no call payload.
+    void log(std::string text);
+
     ExPipeClient *          _p_pipe;
     std::string             p_path;
     uint32_t                p_id;
-    uint32_t                p_type;
-    uint32_t                p_data_type;
 };
 
 #endif // J2534EMULATOR_H
