@@ -14,8 +14,8 @@ QVariant ExJ2534WriteMsgsList::data(const QModelIndex & index, int role) const
 
 void ExJ2534WriteMsgsList::processPipeMessage(PipeMessage msg)
 {
-    if(msg.timestamp == 0)msg.timestamp = QDateTime::currentDateTime().toSecsSinceEpoch();
-    auto obj = new TimestampedObject{0, msg};
+    if(msg.timestampMs() == 0)msg.setTimestampMs(QDateTime::currentDateTime().toMSecsSinceEpoch());
+    auto obj = new TimestampedObject{msg.timestampMs(), msg};
     this->addElement(obj);
 }
 

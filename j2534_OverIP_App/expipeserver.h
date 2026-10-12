@@ -6,8 +6,6 @@
 #include <QLocalSocket>
 #include <QByteArray>
 #include <QMutex>
-#include <QCborMap>
-#include <QCborValue>
 #include <QDebug>
 
 class ExPipeServer : public QLocalServer

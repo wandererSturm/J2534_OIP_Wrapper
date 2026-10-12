@@ -36,7 +36,7 @@ public:
     Q_INVOKABLE ExJ2534WriteMsgsList * getWriteMsgsList(){return this->p_write_msgs;}
 
     Q_INVOKABLE void exportToJSON();
-    Q_INVOKABLE void loadFromJSON(QString fpath);
+    Q_INVOKABLE bool loadFromJSON(QString fpath);
 
 
 public slots:

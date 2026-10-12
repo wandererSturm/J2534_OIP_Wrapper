@@ -1,9 +1,7 @@
 #include "defs.h"
 #include "exj2534emulator.h"
 #include <QTimer>
-#include <QCborValue>
-#include <QCborMap>
-#include <QCborArray>
+#include <QDateTime>
 
 
 
@@ -50,22 +48,20 @@ ExJ2534Emulator * ExJ2534Emulator::create(QQmlEngine *, QJSEngine *engine)
 
 void ExJ2534Emulator::processPipeMessage(PipeMessage msg)
 {
-    if(msg.timestamp == 0)msg.timestamp = QDateTime::currentDateTime().toSecsSinceEpoch();
-    auto obj = new TimestampedObject{msg.timestamp, msg};
+    if(msg.timestampMs() == 0)msg.setTimestampMs(QDateTime::currentDateTime().toMSecsSinceEpoch());
+    auto obj = new TimestampedObject{msg.timestampMs(), msg};
     QTimer::singleShot(0,[this, obj]{this->addElement(obj);});
 
-    if(msg.data_type == 2)
+    switch(msg.payloadField())
     {
-        auto cbor = QCborValue::fromCbor(msg.data).toMap();
-        switch(cbor.value(PipeMessage::KEY_FuncName).toInteger(-1))
-        {
-        case PipeMessage::KEY_PassThruReadMsgs:
-            this->p_read_msgs->processPipeMessage(msg);
-            break;
-        case PipeMessage::KEY_PassThruWriteMsgs:
-            this->p_write_msgs->processPipeMessage(msg);
-            break;
-        }
+    case PipePayload::ReadMsgs:
+        this->p_read_msgs->processPipeMessage(msg);
+        break;
+    case PipePayload::WriteMsgs:
+        this->p_write_msgs->processPipeMessage(msg);
+        break;
+    default:
+        break;
     }
 }
 
@@ -101,11 +97,11 @@ QVariant ExJ2534Emulator::data(const QModelIndex & index, int role) const
 
     switch (role) {
     case ID:
-        return obj->msg.id;
+        return quint32(obj->msg.clientId());
     case Timestamp:
         return obj->timestamp;
     case Message:
-        return obj->msg.message;
+        return obj->msg.text();
     }
 
     return QVariant();

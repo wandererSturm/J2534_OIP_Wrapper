@@ -2,8 +2,7 @@
 #include "types.h"
 #include "expipeserver.h"
 #include <QLocalSocket>
-#include <QCborMap>
-#include <QCborValue>
+#include <QProtobufSerializer>
 #include <QTimer>
 
 #include "expipeserver.h"
@@ -86,56 +85,19 @@ void ExPipeServer::processData(QLocalSocket *clientSocket) {
                 buffer.remove(0, size);
                 size = 0;
 
-                QCborValue cborValue = QCborValue::fromCbor(data);
-                if (!cborValue.isMap())
+                QProtobufSerializer serializer;
+                PipeMessage msg;
+                if (!msg.deserialize(&serializer, data))
                 {
-                    qDbg() << "Error: Data is not a CBOR map";
+                    qDbg() << "Error: can't decode pipe message:" << serializer.lastErrorString();
                     continue;
                 }
 
-                QCborMap map = cborValue.toMap();
-                PipeMessage msg;
-
-                if (map.contains(QLatin1String("id")) && map.value("id").isInteger()) {
-                    msg.id = map.value("id").toInteger();
-                } else {
-                    qDbg() << "Error: 'id' field is missing or not an integer";
-                }
-
-                if (map.contains(QLatin1String("type")) && map.value("type").isInteger()) {
-                    msg.type = map.value("type").toInteger();
-                } else {
-                    qDbg() << "Error: 'type' field is missing or not an integer";
-                }                
-
-                if (map.contains(QLatin1String("data_type")) && map.value("data_type").isInteger()) {
-                    msg.data_type = map.value("data_type").toInteger();
-                } else {
-                    qDbg() << "Error: 'type' field is missing or not an integer";
-                }
-
-                if (map.contains(QLatin1String("timestamp")) && map.value("timestamp").isInteger()) {
-                    msg.timestamp = map.value("timestamp").toInteger(0);
-                } else {
-                    qDbg() << "Error: 'timestamp' field is missing or not an integer";
-                }
-
-                if (map.contains(QLatin1String("path")) && map.value("path").isString()) {
-                    msg.path = map.value("path").toString();
-                } else {
-                    qDbg() << "Error: 'path' field is missing or not a string";
-                }
-
-                if (map.contains(QLatin1String("message")) && map.value("message").isString()) {
-                    msg.message = map.value("message").toString();
-                } else {
-                    qDbg() << "Error: 'message' field is missing or not a string";
-                }
-
-                if (map.contains(QLatin1String("data")) && map.value("data").isByteArray()) {
-                    msg.data = map.value("data").toByteArray();
-                } else {
-                    qDbg() << "Error: 'data' field is missing or not a byte array";
+                if (msg.version() != j2534::pipe::VersionGadget::Version::VERSION_CURRENT)
+                {
+                    qDbg() << "Warning: DLL sent pipe protocol version" << msg.version()
+                           << ", this App expects" << j2534::pipe::VersionGadget::Version::VERSION_CURRENT
+                           << ". Update the DLL or the App so they match.";
                 }
 
                 QTimer::singleShot(0,[msg](){ExMessagePreProcessor::getInstance()->incommingMessageFromClient(msg);});

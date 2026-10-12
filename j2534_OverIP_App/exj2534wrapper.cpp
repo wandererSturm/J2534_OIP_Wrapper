@@ -1,15 +1,9 @@
 #include "exj2534wrapper.h"
 #include "defs.h"
+#include "pipecapture.h"
 #include <QTimer>
-#include <QCborValue>
-#include <QCborMap>
-#include <QCborArray>
-#include <QJsonValue>
-#include <QJsonArray>
-#include <QJsonDocument>
-#include <QJsonObject>
+#include <QDateTime>
 #include <QGuiApplication>
-#include <QFile>
 
 
 ExJ2534Wrapper::ExJ2534Wrapper(QObject * parent):QAbstractListModel(parent)
@@ -81,27 +75,12 @@ QStringList ExJ2534Wrapper::getDllFuncs(bool loaded)
     }*/
 
     if(this->p_loaded_funcs == nullptr)return list;
-    auto cbor = QCborValue::fromCbor(this->p_loaded_funcs->msg.data).toMap();
-    auto funcs = cbor.value(PipeMessage::KEY_Param2).toMap();
 
-    if(loaded)
+    for(const auto &fn: this->p_loaded_funcs->msg.dllLoaded().functions())
     {
-        for(auto val: funcs)
+        if(fn.available() == loaded)
         {
-            if(val.second.toBool(false))
-            {
-                list.append(val.first.toString());
-            }
-        }
-    }
-    else
-    {
-        for(auto val: funcs)
-        {
-            if(!val.second.toBool(false))
-            {
-                list.append(val.first.toString());
-            }
+            list.append(fn.name());
         }
     }
 
@@ -111,115 +90,84 @@ QStringList ExJ2534Wrapper::getDllFuncs(bool loaded)
 
 void ExJ2534Wrapper::processPipeMessage(PipeMessage msg)
 {
-    if(msg.timestamp == 0)msg.timestamp = QDateTime::currentDateTime().toMSecsSinceEpoch();
-    //qDbg() << "[TIMESTAMP]: " << msg.timestamp;
+    if(msg.timestampMs() == 0)msg.setTimestampMs(QDateTime::currentDateTime().toMSecsSinceEpoch());
+    //qDbg() << "[TIMESTAMP]: " << msg.timestampMs();
 
-    auto obj = new TimestampedObject{msg.timestamp, msg};
+    auto obj = new TimestampedObject{msg.timestampMs(), msg};
     QTimer::singleShot(0,[obj, this]{this->addElement(obj);});
 
-    if(msg.data_type == 2)
+    switch(msg.payloadField())
     {
-        auto cbor = QCborValue::fromCbor(msg.data).toMap();
-        switch(cbor.value(PipeMessage::KEY_FuncName).toInteger(-1))
+    case PipePayload::ModuleStarted:
         {
-        case 0: //constructor
-            {
-                qDbg() << "[MSG]: J2534DllWrapper constructor: 0x" << QString::number(cbor.value(PipeMessage::KEY_Param1).toInteger(), 16);
-            }
-            break;
-        case 1: // loadDll
-            {
-                qDbg() << "[MSG]: " << cbor.value(PipeMessage::KEY_Param1).toString();
-                if(cbor.contains(PipeMessage::KEY_Error)){
-                    obj->hasError = true;
-                    qDbg() << "[MSG] loadDll failed: " << cbor.value(PipeMessage::KEY_Error).toString();
-                }
-                this->p_loaded_funcs = obj;
-                emit dll_funcsChanged();
-                auto funcs = cbor.value(PipeMessage::KEY_Param2).toMap();
-                for(auto val: funcs)
-                {
-                    qDbg() << "[MAP] " << val.first.toString() << " loaded: " << val.second.toBool();
-                }
-            }
-            break;
-        case PipeMessage::KEY_PassThruReadMsgs:
-            {
-                this->p_read_msgs->processPipeMessage(msg);
-            }
-            break;
-        case PipeMessage::KEY_PassThruWriteMsgs:
-            {
-                this->p_write_msgs->processPipeMessage(msg);
-            }
-            break;
-        case PipeMessage::KEY_PassThruQueueMsgs:
-            {
-                qDbg() << "[QUEUE_MSG] ";
-            }
-            break;
+            qDbg() << "[MSG]: J2534DllWrapper constructor: 0x" << QString::number(quint64(msg.moduleStarted().instance()), 16);
         }
+        break;
+    case PipePayload::DllLoaded:
+        {
+            const auto &loaded = msg.dllLoaded();
+            qDbg() << "[MSG]: " << loaded.path();
+            if(!loaded.error().isEmpty()){
+                obj->hasError = true;
+                qDbg() << "[MSG] loadDll failed: " << loaded.error();
+            }
+            this->p_loaded_funcs = obj;
+            emit dll_funcsChanged();
+            for(const auto &fn: loaded.functions())
+            {
+                qDbg() << "[MAP] " << fn.name() << " loaded: " << fn.available();
+            }
+        }
+        break;
+    case PipePayload::ReadMsgs:
+        {
+            this->p_read_msgs->processPipeMessage(msg);
+        }
+        break;
+    case PipePayload::WriteMsgs:
+        {
+            this->p_write_msgs->processPipeMessage(msg);
+        }
+        break;
+    case PipePayload::QueueMsgs:
+        {
+            qDbg() << "[QUEUE_MSG] ";
+        }
+        break;
+    default:
+        break;
     }
 }
 
 void ExJ2534Wrapper::exportToJSON()
 {
-    QJsonDocument doc;
-    QJsonArray arr;
-    for(auto it: this->p_objs)
-    {        
-        arr.append(
-            QJsonObject
-            {
-                {"id", (qint64)it->msg.id},
-                {"data_type", (qint64)it->msg.data_type},
-                {"type", (qint64)it->msg.type},
-                {"timestamp", (qint64)it->msg.timestamp},
-                {"path", it->msg.path},
-                {"message", it->msg.message},
-                {"data", QCborValue::fromCbor(it->msg.data).toJsonValue()},
-            }
-        );
-    }
-    doc.setArray(arr);
+    QList<PipeMessage> messages;
+    for(auto it: this->p_objs)messages.append(it->msg);
 
     auto path = QGuiApplication::instance()->applicationDirPath().append(QStringLiteral("\\export.json"));
-    QFile file(path);
-    if(file.open(QFile::WriteOnly))
+    QString error;
+    if(!PipeCapture::save(path, messages, &error))
     {
-        file.write(doc.toJson());
-        file.close();
+        qWarning() << "[ExJ2534Wrapper] export failed:" << error;
     }
 }
 
-void ExJ2534Wrapper::loadFromJSON(QString fpath)
+bool ExJ2534Wrapper::loadFromJSON(QString fpath)
 {
     QString path;
     if(!fpath.isEmpty())path = fpath;
     else path = QGuiApplication::instance()->applicationDirPath().append(QStringLiteral("\\export.json"));
 
-    QFile file(path);
-    if(file.open(QFile::ReadOnly))
+    QList<PipeMessage> messages;
+    QString error;
+    if(!PipeCapture::load(path, &messages, &error))
     {
-        QJsonDocument doc = QJsonDocument::fromJson(file.readAll());
-        file.close();
-
-        auto arr = doc.array();
-        for(auto it: arr)
-        {
-            PipeMessage pmsg;
-            auto obj = it.toObject();
-            pmsg.id = obj.value("id").toInteger();
-            pmsg.data_type = obj.value("data_type").toInteger();
-            pmsg.type = obj.value("type").toInteger();
-            pmsg.timestamp = obj.value("timestamp").toInteger();
-            pmsg.path = obj.value("path").toString();
-            pmsg.message = obj.value("message").toString();
-            pmsg.data = QCborValue::fromJsonValue(obj.value("data")).toCbor();
-
-            this->processPipeMessage(pmsg);
-        }
+        qWarning() << "[ExJ2534Wrapper] load failed:" << error;
+        return false;
     }
+
+    for(const auto &pmsg: messages)this->processPipeMessage(pmsg);
+    return true;
 }
 
 void ExJ2534Wrapper::addElement(TimestampedObject * obj)
@@ -255,11 +203,11 @@ QVariant ExJ2534Wrapper::data(const QModelIndex & index, int role) const
 
     switch (role) {
     case ID:
-        return obj->msg.id;
+        return quint32(obj->msg.clientId());
     case Timestamp:
         return QDateTime::fromMSecsSinceEpoch(obj->timestamp).toString("[hh:mm:ss.zzz]");
     case Message:
-        return obj->msg.message;
+        return obj->msg.text();
     case HasError:
         return obj->hasError;
     }

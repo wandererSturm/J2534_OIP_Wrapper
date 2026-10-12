@@ -8,8 +8,12 @@
 #include <cstring>
 #include <vector>
 
+#include <QTemporaryDir>
+#include <QFile>
+
 #include "pipe_message_builder.h"
 #include "j2534_pipe.qpb.h"
+#include "pipecapture.h"
 
 using namespace j2534::pipe;
 using Payload = PipeMessage::PayloadFields;
@@ -261,6 +265,49 @@ private slots:
         QCOMPARE(reloaded.payloadField(), Payload::WriteMsgs);
         QCOMPARE(reloaded.writeMsgs().msgs().at(0).data(), QByteArray(5, char(0x11)));
         QCOMPARE(reloaded.processPath(), original.processPath());
+    }
+
+    void captureFileRoundTrip()
+    {
+        PASSTHRU_MSG m = make_msg(6, 4, 0x22);
+        PipeMessageBuilder b(j2534_pipe_Module_MODULE_DLL_WRAPPER, kClientId, kProcessPath, "PassThruReadMsgs");
+        auto& call = b.select(j2534_pipe_PipeMessage_read_msgs_tag, b.msg().payload.read_msgs);
+        call.msgs = b.msgs(&m, 1);
+        b.result(call, 0);
+
+        QList<PipeMessage> saved{decode(b.encode()),
+                                 decode(PipeMessageBuilder(j2534_pipe_Module_MODULE_EMULATOR, kClientId, kProcessPath, "log line").encode())};
+
+        QTemporaryDir dir;
+        QVERIFY(dir.isValid());
+        const QString path = dir.filePath("export.json");
+
+        QString error;
+        QVERIFY2(PipeCapture::save(path, saved, &error), qPrintable(error));
+
+        QList<PipeMessage> loaded;
+        QVERIFY2(PipeCapture::load(path, &loaded, &error), qPrintable(error));
+        QCOMPARE(loaded.size(), 2);
+        QCOMPARE(loaded.at(0).readMsgs().msgs().at(0).data(), QByteArray(4, char(0x22)));
+        QCOMPARE(loaded.at(1).text(), QStringLiteral("log line"));
+        QCOMPARE(loaded.at(1).module(), ModuleGadget::Module::MODULE_EMULATOR);
+    }
+
+    void captureFileRejectsCborFormat()
+    {
+        QTemporaryDir dir;
+        const QString path = dir.filePath("old_export.json");
+        QFile file(path);
+        QVERIFY(file.open(QFile::WriteOnly));
+        // Shape written by the CBOR-based App: a bare array with integer-keyed data maps.
+        file.write(R"([{"id": 1, "type": 2, "data_type": 2, "timestamp": 0, "path": "x", "message": "PassThruOpen", "data": {"0": 20}}])");
+        file.close();
+
+        QList<PipeMessage> loaded;
+        QString error;
+        QVERIFY(!PipeCapture::load(path, &loaded, &error));
+        QVERIFY(loaded.isEmpty());
+        QVERIFY2(error.contains("older version"), qPrintable(error));
     }
 };
 

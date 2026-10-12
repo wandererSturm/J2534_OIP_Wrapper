@@ -1,4 +1,7 @@
-qt_add_executable(pipe_roundtrip_test pipe_roundtrip_test.cpp)
+qt_add_executable(pipe_roundtrip_test
+    pipe_roundtrip_test.cpp
+    ${PROJECT_SOURCE_DIR}/j2534_OverIP_App/pipecapture.cpp)
+target_include_directories(pipe_roundtrip_test PRIVATE ${PROJECT_SOURCE_DIR}/j2534_OverIP_App)
 # Console app so QtTest output reaches ctest (qt_standard_project_setup defaults to WIN32).
 set_target_properties(pipe_roundtrip_test PROPERTIES WIN32_EXECUTABLE FALSE)
 target_link_libraries(pipe_roundtrip_test PRIVATE
