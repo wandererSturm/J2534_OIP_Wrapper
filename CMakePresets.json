@@ -1,6 +1,10 @@
 {
   "version": 6,
-  "cmakeMinimumRequired": { "major": 3, "minor": 21, "patch": 0 },
+  "cmakeMinimumRequired": {
+    "major": 3,
+    "minor": 25,
+    "patch": 0
+  },
   "configurePresets": [
     {
       "name": "base",
@@ -13,28 +17,62 @@
       "name": "x86",
       "displayName": "x86 PassThru DLL",
       "inherits": "base",
-      "architecture": { "value": "Win32", "strategy": "set" },
+      "architecture": {
+        "value": "Win32",
+        "strategy": "set"
+      },
       "cacheVariables": {
         "J2534_BUILD_DLL": "ON",
-        "J2534_BUILD_APP": "OFF"
+        "J2534_BUILD_APP": "OFF",
+        "J2534_BUILD_TESTS": "OFF"
       }
     },
     {
       "name": "x64",
       "displayName": "x64 Qt App (set QTDIR, e.g. C:/Qt/6.11.0/msvc2022_64)",
       "inherits": "base",
-      "architecture": { "value": "x64", "strategy": "set" },
+      "architecture": {
+        "value": "x64",
+        "strategy": "set"
+      },
       "cacheVariables": {
         "J2534_BUILD_DLL": "OFF",
         "J2534_BUILD_APP": "ON",
-        "CMAKE_PREFIX_PATH": "$env{QTDIR}"
+        "CMAKE_PREFIX_PATH": "$env{QTDIR}",
+        "J2534_BUILD_TESTS": "ON"
       }
     }
   ],
   "buildPresets": [
-    { "name": "x86", "configurePreset": "x86", "configuration": "Release" },
-    { "name": "x86-debug", "configurePreset": "x86", "configuration": "Debug" },
-    { "name": "x64", "configurePreset": "x64", "configuration": "Release" },
-    { "name": "x64-debug", "configurePreset": "x64", "configuration": "Debug" }
+    {
+      "name": "x86",
+      "configurePreset": "x86",
+      "configuration": "Release"
+    },
+    {
+      "name": "x86-debug",
+      "configurePreset": "x86",
+      "configuration": "Debug"
+    },
+    {
+      "name": "x64",
+      "configurePreset": "x64",
+      "configuration": "Release"
+    },
+    {
+      "name": "x64-debug",
+      "configurePreset": "x64",
+      "configuration": "Debug"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "x64",
+      "configurePreset": "x64",
+      "configuration": "Release",
+      "output": {
+        "outputOnFailure": true
+      }
+    }
   ]
 }

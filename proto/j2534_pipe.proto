@@ -1,0 +1,308 @@
+// Messages sent from the PassThru DLL to the App over the named pipe
+// \\.\pipe\exj2534_overip_pipe. Each PipeMessage is framed by a little-endian
+// int32 byte length.
+//
+// The DLL encodes with nanopb (x86, no Qt); the App decodes with QtProtobuf.
+// Integer J2534 values (protocol IDs, flags, ioctl IDs) stay uint32 because
+// drivers use vendor-specific values outside the SAE ranges.
+
+syntax = "proto3";
+
+package j2534.pipe;
+
+// Bump VERSION_CURRENT for changes that older Apps cannot read.
+enum Version {
+    VERSION_UNSPECIFIED = 0;
+    VERSION_CURRENT = 1;
+}
+
+// Which PassThru implementation inside the DLL sent the message.
+// Values match the old `type` field.
+enum Module {
+    MODULE_UNSPECIFIED = 0;
+    MODULE_DLL_WRAPPER = 2;
+    MODULE_EMULATOR = 3;
+    MODULE_CANNELLONI = 4;
+}
+
+message PipeMessage {
+    Version version = 1;
+    uint32 client_id = 2;       // crc32 of process_path
+    Module module = 3;
+    int64 timestamp_ms = 4;     // ms since Unix epoch
+    string process_path = 5;    // host executable that loaded the DLL
+    string text = 6;            // free-form log line
+
+    oneof payload {
+        ModuleStarted module_started = 10;
+        DllLoaded dll_loaded = 11;
+
+        OpenCall open = 20;
+        CloseCall close = 21;
+        ConnectCall connect = 22;
+        DisconnectCall disconnect = 23;
+        ReadMsgsCall read_msgs = 24;
+        QueueMsgsCall queue_msgs = 25;
+        WriteMsgsCall write_msgs = 26;
+        StartPeriodicMsgCall start_periodic_msg = 27;
+        StopPeriodicMsgCall stop_periodic_msg = 28;
+        StartMsgFilterCall start_msg_filter = 29;
+        StopMsgFilterCall stop_msg_filter = 30;
+        SetProgrammingVoltageCall set_programming_voltage = 31;
+        ReadVersionCall read_version = 32;
+        GetLastErrorCall get_last_error = 33;
+        IoctlCall ioctl = 34;
+
+        // v05.00
+        ScanForDevicesCall scan_for_devices = 40;
+        GetNextDeviceCall get_next_device = 41;
+        SelectCall select = 42;
+
+        // Vendor (Drew Tech / CarDAQ) extensions
+        VendorCall vendor = 50;
+        ReadIpSetupCall read_ip_setup = 51;
+        WriteIpSetupCall write_ip_setup = 52;
+        ReadPcSetupCall read_pc_setup = 53;
+        GetPointerCall get_pointer = 54;
+        GetNextCarDaqCall get_next_cardaq = 55;
+        ReadDetailsCall read_details = 56;
+    }
+}
+
+// What the host got back from the call.
+message CallResult {
+    int32 status = 1;   // J2534 return code handed to the host application
+    string error = 2;   // set when the call could not be made (e.g. function missing in the wrapped DLL)
+}
+
+message PassThruMsg {
+    uint32 protocol_id = 1;
+    uint32 rx_status = 2;
+    uint32 tx_flags = 3;
+    uint32 timestamp = 4;
+    uint32 data_size = 5;           // DataSize as reported; data is clamped to 4128 bytes
+    uint32 extra_data_index = 6;
+    bytes data = 7;
+}
+
+// ---------------------------------------------------------------------------
+// Lifecycle
+
+message ModuleStarted {
+    uint64 instance = 1;    // address of the module object, to tell instances apart
+}
+
+message DllLoaded {
+    message Function {
+        string name = 1;
+        bool available = 2;
+    }
+    string path = 1;
+    repeated Function functions = 2;
+    string error = 3;
+}
+
+// ---------------------------------------------------------------------------
+// SAE J2534 v04.04
+
+message OpenCall {
+    string name = 1;
+    uint32 device_id = 2;           // out
+    CallResult result = 15;
+}
+
+message CloseCall {
+    uint32 device_id = 1;
+    CallResult result = 15;
+}
+
+message ConnectCall {
+    uint32 device_id = 1;
+    uint32 protocol_id = 2;
+    uint32 flags = 3;
+    uint32 baudrate = 4;
+    uint32 channel_id = 5;          // out
+    CallResult result = 15;
+}
+
+message DisconnectCall {
+    uint32 channel_id = 1;
+    CallResult result = 15;
+}
+
+message ReadMsgsCall {
+    uint32 channel_id = 1;
+    uint32 num_msgs_requested = 2;
+    uint32 timeout = 3;
+    repeated PassThruMsg msgs = 4;  // out
+    CallResult result = 15;
+}
+
+message QueueMsgsCall {
+    uint32 channel_id = 1;
+    repeated PassThruMsg msgs = 2;
+    uint32 num_msgs_queued = 3;     // out
+    CallResult result = 15;
+}
+
+message WriteMsgsCall {
+    uint32 channel_id = 1;
+    repeated PassThruMsg msgs = 2;
+    uint32 timeout = 3;
+    uint32 num_msgs_written = 4;    // out
+    CallResult result = 15;
+}
+
+message StartPeriodicMsgCall {
+    uint32 channel_id = 1;
+    PassThruMsg msg = 2;
+    uint32 time_interval = 3;
+    uint32 msg_id = 4;              // out
+    CallResult result = 15;
+}
+
+message StopPeriodicMsgCall {
+    uint32 channel_id = 1;
+    uint32 msg_id = 2;
+    CallResult result = 15;
+}
+
+message StartMsgFilterCall {
+    uint32 channel_id = 1;
+    uint32 filter_type = 2;
+    PassThruMsg mask = 3;
+    PassThruMsg pattern = 4;
+    PassThruMsg flow_control = 5;   // absent for non flow-control filters
+    uint32 filter_id = 6;           // out
+    CallResult result = 15;
+}
+
+message StopMsgFilterCall {
+    uint32 channel_id = 1;
+    uint32 filter_id = 2;
+    CallResult result = 15;
+}
+
+message SetProgrammingVoltageCall {
+    uint32 device_id = 1;
+    uint32 pin = 2;
+    uint32 voltage = 3;
+    CallResult result = 15;
+}
+
+message ReadVersionCall {
+    uint32 device_id = 1;
+    string firmware_version = 2;    // out
+    string dll_version = 3;         // out
+    string api_version = 4;         // out
+    CallResult result = 15;
+}
+
+message GetLastErrorCall {
+    string error_description = 1;   // out
+    CallResult result = 15;
+}
+
+message IoctlCall {
+    uint32 channel_id = 1;
+    uint32 ioctl_id = 2;
+    CallResult result = 15;
+}
+
+// ---------------------------------------------------------------------------
+// SAE J2534 v05.00
+
+message ScanForDevicesCall {
+    uint32 device_count = 1;        // out
+    CallResult result = 15;
+}
+
+message Device {
+    string name = 1;
+    uint32 available = 2;
+    uint32 dll_fw_status = 3;
+    uint32 connect_media = 4;
+    uint32 connect_speed = 5;
+    uint32 signal_quality = 6;
+    uint32 signal_strength = 7;
+}
+
+message GetNextDeviceCall {
+    Device device = 1;              // out
+    CallResult result = 15;
+}
+
+message SelectCall {
+    repeated uint32 channel_ids = 1;
+    uint32 channel_threshold = 2;
+    uint32 select_type = 3;
+    uint32 timeout = 4;
+    CallResult result = 15;
+}
+
+// ---------------------------------------------------------------------------
+// Vendor extensions
+
+enum VendorFunction {
+    VENDOR_FUNCTION_UNSPECIFIED = 0;
+    VENDOR_FUNCTION_EX_CONFIGURE_WIFI = 1;
+    VENDOR_FUNCTION_EX_DEVICE_WATCHDOG = 2;
+    VENDOR_FUNCTION_EX_DOWNLOAD_CYPHERED_FLASH_DATA = 3;
+    VENDOR_FUNCTION_EX_ERASE_FLASH = 4;
+    VENDOR_FUNCTION_EX_INITIATE_CYPHERED_FLASH_DOWNLOAD = 5;
+    VENDOR_FUNCTION_EX_READ_FLASH = 6;
+    VENDOR_FUNCTION_EX_RESET_FLASH = 7;
+    VENDOR_FUNCTION_EX_RUN_SELF_TEST = 8;
+    VENDOR_FUNCTION_EX_WRITE_FLASH = 9;
+    VENDOR_FUNCTION_LOAD_FIRMWARE = 10;
+    VENDOR_FUNCTION_RECOVER_FIRMWARE = 11;
+}
+
+// Parameterless vendor functions.
+message VendorCall {
+    VendorFunction vendor_function = 1;
+    CallResult result = 15;
+}
+
+message IpSetup {
+    string host_name = 1;
+    string ip_addr = 2;
+    string subnet_mask = 3;
+    string gateway = 4;
+    string dhcp_addr = 5;
+}
+
+message ReadIpSetupCall {
+    uint32 device_id = 1;
+    IpSetup setup = 2;              // out
+    CallResult result = 15;
+}
+
+message WriteIpSetupCall {
+    uint32 device_id = 1;
+    IpSetup setup = 2;
+    CallResult result = 15;
+}
+
+message ReadPcSetupCall {
+    string host_name = 1;           // out
+    string ip_addr = 2;             // out
+    CallResult result = 15;
+}
+
+message GetPointerCall {
+    int32 vb_pointer = 1;
+    CallResult result = 15;
+}
+
+message GetNextCarDaqCall {
+    string name = 1;                // out, empty when no more devices
+    uint32 version = 2;             // out
+    string addr = 3;                // out
+    CallResult result = 15;
+}
+
+message ReadDetailsCall {
+    uint32 name = 1;                // in/out
+    CallResult result = 15;
+}
