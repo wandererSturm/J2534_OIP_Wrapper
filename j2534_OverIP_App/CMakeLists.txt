@@ -22,6 +22,7 @@ qt_add_qml_module(j2534_OverIP_App
         CannelloniMainView.qml
         CannelloniSettings.qml
         CannelloniRXView.qml
+        CannelloniRXTXQueuesView.qml
         CannelloniTXView.qml
     SOURCES
         defs.h
