@@ -2,13 +2,15 @@ import QtQuick
 import QtQuick.Controls.Universal
 import QtQuick.Layouts
 
+import de.xplatforms.j2534 1.0
+
 ApplicationWindow
 {
     id: window
     width: 1200
     height: 720
     visible: true
-    title: qsTr("J2534 OverIP App - Xplatforms")
+    title: "J2534 OverIP App" + (roleBanner.roleName !== "" ? " — " + roleBanner.roleName : "") + " - Xplatforms"
 
     Action
     {
@@ -37,25 +39,74 @@ ApplicationWindow
         onTriggered: optionsMenu.open()
     }
 
-    Component.onCompleted: function(){
-        switch(ExSelectedInterface)
+    // Main view for InterfaceConfig.selectedModule (0 = nothing selected).
+    function pageForModule(module)
+    {
+        switch(module)
         {
-        case 0:
-            console.log("SimpleLogger")
-            // NoInterfacePage is already the initial item
-            break
-        case 2:
-            console.log("J2534DllWrapper")
-            stackViewMain.push("J2534Wrapper.qml")
-            break
-        case 3:
-            console.log("J2534Emulator")
-            stackViewMain.push("J2534Emulator.qml")
-            break
-        case 4:
-            console.log("J2534Cannelloni")
-            stackViewMain.push("J2534Cannelloni.qml")
-            break
+        case 2: return "J2534Wrapper.qml"
+        case 3: return "J2534Emulator.qml"
+        case 4: return "J2534Cannelloni.qml"
+        case 5: return "RemotePage.qml"
+        }
+        return "InterfacePage.qml"
+    }
+
+    function showSelectedModule()
+    {
+        console.log("PassThru interface: " + InterfaceConfig.selectedInterface)
+        stackViewMain.replace(null, VehicleSharing.vehicleMode ? "VehiclePage.qml"
+                                                               : pageForModule(InterfaceConfig.selectedModule))
+    }
+
+    Component.onCompleted: showSelectedModule()
+
+    Connections
+    {
+        target: InterfaceConfig
+        function onSelectionChanged() { if (!VehicleSharing.vehicleMode) window.showSelectedModule() }
+        function onChooserRequested() { stackViewMain.push("InterfacePage.qml") }
+        function onApplyFinished(ok, message)
+        {
+            if (!ok) return
+            applyToastText.text = message
+            applyToast.open()
+        }
+    }
+
+    Connections
+    {
+        target: VehicleSharing
+        function onVehicleModeChanged() { window.showSelectedModule() }
+        // Someone waits for Allow: flash the taskbar button if we're in the background.
+        function onAttentionNeeded(text) { window.alert(0) }
+    }
+
+    Popup
+    {
+        id: applyToast
+        x: (window.width - width) / 2
+        y: window.height - height - 24
+        width: Math.min(window.width - 48, 640)
+        padding: 12
+        closePolicy: Popup.CloseOnPressOutside | Popup.CloseOnEscape
+        background: Rectangle { color: "#107c10"; radius: 6 }
+
+        onOpened: applyToastTimer.restart()
+
+        Label
+        {
+            id: applyToastText
+            width: parent.width
+            wrapMode: Text.Wrap
+            color: "white"
+        }
+
+        Timer
+        {
+            id: applyToastTimer
+            interval: 8000
+            onTriggered: applyToast.close()
         }
     }
 
@@ -134,7 +185,7 @@ ApplicationWindow
 
                         model: ListModel {
                             ListElement { title: "Main"; source: "MainPage.qml" }
-                            ListElement { title: "Interface"; source: "NoInterfacePage.qml" }
+                            ListElement { title: "Interface"; source: "InterfacePage.qml" }
                         }
 
                         ScrollIndicator.vertical: ScrollIndicator { }
@@ -158,12 +209,10 @@ ApplicationWindow
             anchors.leftMargin: 1
             anchors.bottomMargin: 1
 
-            RowLayout
+            RoleBanner
             {
+                id: roleBanner
                 Layout.fillWidth: true
-                Layout.fillHeight: false
-                Layout.margins: 0
-                spacing: 0
             }
 
             StackView
@@ -190,8 +239,6 @@ ApplicationWindow
 
                     }
                 }
-
-                initialItem: NoInterfacePage{}
 
                 //initialItem: MainPage{}
 

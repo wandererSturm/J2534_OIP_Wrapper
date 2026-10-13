@@ -19,6 +19,13 @@ Pane
         spacing: 0
         Layout.margins: 0
 
+        InterfaceRow
+        {
+            Layout.leftMargin: 12
+            Layout.topMargin: 4
+            Layout.bottomMargin: 4
+        }
+
         RowLayout
         {
             Layout.fillWidth: true

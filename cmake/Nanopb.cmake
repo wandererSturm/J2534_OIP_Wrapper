@@ -32,6 +32,15 @@ function(nanopb_generate out_var proto_file output_dir)
     set(descriptor "${output_dir}/${proto_name}.pb")
     set(generated "${output_dir}/${proto_name}.pb.c" "${output_dir}/${proto_name}.pb.h")
 
+    # Size limits etc. from <name>.options next to the .proto, if present.
+    set(options_args "")
+    set(options_depends "")
+    set(options_file "${proto_dir}/${proto_name}.options")
+    if(EXISTS "${options_file}")
+        set(options_args --options-file "${options_file}")
+        set(options_depends "${options_file}")
+    endif()
+
     add_custom_command(
         OUTPUT ${generated}
         COMMAND ${CMAKE_COMMAND} -E make_directory "${output_dir}"
@@ -47,8 +56,9 @@ function(nanopb_generate out_var proto_file output_dir)
                 "${NANOPB_SOURCE_DIR}/generator/nanopb_generator.py"
                 --quiet
                 --output-dir "${output_dir}"
+                ${options_args}
                 "${descriptor}"
-        DEPENDS "${proto_file}"
+        DEPENDS "${proto_file}" ${options_depends}
         COMMENT "nanopb: generating ${proto_name}.pb.c/.pb.h"
         VERBATIM)
 
