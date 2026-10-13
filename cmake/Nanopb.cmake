@@ -34,9 +34,11 @@ function(nanopb_generate out_var proto_file output_dir)
 
     # Size limits etc. from <name>.options next to the .proto, if present.
     set(options_args "")
+    set(options_depends "")
     set(options_file "${proto_dir}/${proto_name}.options")
     if(EXISTS "${options_file}")
         set(options_args --options-file "${options_file}")
+        set(options_depends "${options_file}")
     endif()
 
     add_custom_command(
@@ -56,7 +58,7 @@ function(nanopb_generate out_var proto_file output_dir)
                 --output-dir "${output_dir}"
                 ${options_args}
                 "${descriptor}"
-        DEPENDS "${proto_file}" $<$<BOOL:${options_args}>:${options_file}>
+        DEPENDS "${proto_file}" ${options_depends}
         COMMENT "nanopb: generating ${proto_name}.pb.c/.pb.h"
         VERBATIM)
 
