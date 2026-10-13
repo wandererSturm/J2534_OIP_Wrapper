@@ -2,13 +2,15 @@ import QtQuick
 import QtQuick.Controls.Universal
 import QtQuick.Layouts
 
+import de.xplatforms.j2534 1.0
+
 ApplicationWindow
 {
     id: window
     width: 1200
     height: 720
     visible: true
-    title: qsTr("J2534 OverIP App - Xplatforms")
+    title: "J2534 OverIP App" + (roleBanner.roleName !== "" ? " — " + roleBanner.roleName : "") + " - Xplatforms"
 
     Action
     {
@@ -45,6 +47,7 @@ ApplicationWindow
         case 2: return "J2534Wrapper.qml"
         case 3: return "J2534Emulator.qml"
         case 4: return "J2534Cannelloni.qml"
+        case 5: return "RemotePage.qml"
         }
         return "InterfacePage.qml"
     }
@@ -52,7 +55,8 @@ ApplicationWindow
     function showSelectedModule()
     {
         console.log("PassThru interface: " + InterfaceConfig.selectedInterface)
-        stackViewMain.replace(null, pageForModule(InterfaceConfig.selectedModule))
+        stackViewMain.replace(null, VehicleSharing.vehicleMode ? "VehiclePage.qml"
+                                                               : pageForModule(InterfaceConfig.selectedModule))
     }
 
     Component.onCompleted: showSelectedModule()
@@ -60,7 +64,7 @@ ApplicationWindow
     Connections
     {
         target: InterfaceConfig
-        function onSelectionChanged() { window.showSelectedModule() }
+        function onSelectionChanged() { if (!VehicleSharing.vehicleMode) window.showSelectedModule() }
         function onChooserRequested() { stackViewMain.push("InterfacePage.qml") }
         function onApplyFinished(ok, message)
         {
@@ -68,6 +72,14 @@ ApplicationWindow
             applyToastText.text = message
             applyToast.open()
         }
+    }
+
+    Connections
+    {
+        target: VehicleSharing
+        function onVehicleModeChanged() { window.showSelectedModule() }
+        // Someone waits for Allow: flash the taskbar button if we're in the background.
+        function onAttentionNeeded(text) { window.alert(0) }
     }
 
     Popup
@@ -197,12 +209,10 @@ ApplicationWindow
             anchors.leftMargin: 1
             anchors.bottomMargin: 1
 
-            RowLayout
+            RoleBanner
             {
+                id: roleBanner
                 Layout.fillWidth: true
-                Layout.fillHeight: false
-                Layout.margins: 0
-                spacing: 0
             }
 
             StackView

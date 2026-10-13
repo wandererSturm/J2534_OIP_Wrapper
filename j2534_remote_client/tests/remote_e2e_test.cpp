@@ -6,6 +6,9 @@
 //   remote_e2e_test.exe <j2534_OverIP_App.exe> <j2534_device_host.exe> <fake_j2534_driver.dll>
 //
 // Exits 77 (skipped) when the App has not been built/installed.
+//
+// With J2534_E2E_TUNNEL=1 the App also opens a trycloudflare quick tunnel
+// (needs cloudflared and the internet) and the client connects through it.
 
 #include <windows.h>
 
@@ -19,6 +22,7 @@
 namespace {
 
 int g_failures = 0;
+int g_openAttempts = 100;   // x 150 ms
 
 #define CHECK(cond)                                                          \
     do {                                                                     \
@@ -59,7 +63,7 @@ PASSTHRU_MSG canMsg(uint32_t id, unsigned char tag)
 long openWithRetry(J2534RemoteClient &client, unsigned long &device)
 {
     long status = ERR_DEVICE_NOT_CONNECTED;
-    for (int i = 0; i < 100 && status == ERR_DEVICE_NOT_CONNECTED; ++i) {
+    for (int i = 0; i < g_openAttempts && status == ERR_DEVICE_NOT_CONNECTED; ++i) {
         status = client.PassThruOpen(nullptr, &device);
         if (status == ERR_DEVICE_NOT_CONNECTED && lastError(client).find("refused") != std::string::npos)
             break;   // reachable but refused: retrying won't help
@@ -146,10 +150,52 @@ void runCalls(J2534RemoteClient &client)
     CHECK(client.PassThruClose(device) == STATUS_NOERROR);
 }
 
+// Reads the App's output until "Connection code: <code>"; empty on timeout.
+std::string waitForTunnelCode(HANDLE output, DWORD timeoutMs)
+{
+    const std::string marker = "Connection code: ";
+    std::string text;
+    const DWORD start = GetTickCount();
+    while (GetTickCount() - start < timeoutMs) {
+        DWORD available = 0;
+        if (!PeekNamedPipe(output, nullptr, 0, nullptr, &available, nullptr))
+            return {};
+        if (available == 0) {
+            Sleep(100);
+            continue;
+        }
+        char buffer[512];
+        DWORD read = 0;
+        if (!ReadFile(output, buffer, sizeof(buffer), &read, nullptr))
+            return {};
+        std::fwrite(buffer, 1, read, stdout);
+        text.append(buffer, read);
+        const auto at = text.find(marker);
+        if (at != std::string::npos) {
+            const auto end = text.find_first_of("\r\n", at);
+            if (end != std::string::npos)
+                return text.substr(at + marker.size(), end - at - marker.size());
+        }
+    }
+    return {};
+}
+
 } // namespace
 
 int wmain(int argc, wchar_t *argv[])
 {
+    // J2534_E2E_CODE=<code>: only the calls, against a Vehicle PC that is
+    // already sharing the fake driver (e.g. from the App's UI).
+    char existing[256] = {};
+    if (GetEnvironmentVariableA("J2534_E2E_CODE", existing, sizeof(existing)) > 0) {
+        const std::string value = existing;
+        J2534RemoteClient client([value] { return value; }, "TEST-UI");
+        g_openAttempts = 400;
+        runCalls(client);
+        std::printf("%s (%d failure%s)\n", g_failures ? "FAILED" : "PASSED", g_failures, g_failures == 1 ? "" : "s");
+        return g_failures ? 1 : 0;
+    }
+
     if (argc < 4) {
         std::printf("usage: remote_e2e_test <app.exe> <j2534_device_host.exe> <fake_j2534_driver.dll>\n");
         return 2;
@@ -169,17 +215,41 @@ int wmain(int argc, wchar_t *argv[])
     const int port = 41000 + static_cast<int>(GetCurrentProcessId() % 20000);
     const std::string secret = "E2E-SECRET-1234";
 
+    wchar_t tunnelFlag[8] = {};
+    const bool viaTunnel = GetEnvironmentVariableW(L"J2534_E2E_TUNNEL", tunnelFlag, 8) > 0 && tunnelFlag[0] == L'1';
+
     std::wstring command = L"\"" + app + L"\" --vehicle-server --driver \"" + driver + L"\" --device-host \"" + host
                            + L"\" --port " + std::to_wstring(port) + L" --secret " + std::wstring(secret.begin(), secret.end())
-                           + L" --adapter-name \"Fake adapter\"";
+                           + L" --adapter-name \"Fake adapter\"" + (viaTunnel ? L" --tunnel" : L"");
     STARTUPINFOW si{sizeof(si)};
     PROCESS_INFORMATION server{};
-    if (!CreateProcessW(nullptr, command.data(), nullptr, nullptr, FALSE, 0, nullptr, nullptr, &si, &server)) {
+    HANDLE outputRead = nullptr, outputWrite = nullptr;
+    if (viaTunnel) {
+        // Capture the App's output to read the connection code.
+        SECURITY_ATTRIBUTES inherit{sizeof(inherit), nullptr, TRUE};
+        CreatePipe(&outputRead, &outputWrite, &inherit, 1 << 16);
+        SetHandleInformation(outputRead, HANDLE_FLAG_INHERIT, 0);
+        si.dwFlags = STARTF_USESTDHANDLES;
+        si.hStdOutput = si.hStdError = outputWrite;
+    }
+    if (!CreateProcessW(nullptr, command.data(), nullptr, nullptr, viaTunnel, 0, nullptr, nullptr, &si, &server)) {
         std::printf("FAIL: can't start the App (%lu)\n", GetLastError());
         return 1;
     }
 
-    const std::string endpoint = "127.0.0.1:" + std::to_string(port);
+    std::string endpoint = "127.0.0.1:" + std::to_string(port);
+    if (viaTunnel) {
+        CloseHandle(outputWrite);
+        const std::string tunnelCode = waitForTunnelCode(outputRead, 90000);
+        if (tunnelCode.empty()) {
+            std::printf("FAIL: no tunnel connection code from the App\n");
+            TerminateProcess(server.hProcess, 1);
+            return 1;
+        }
+        endpoint = tunnelCode.substr(0, tunnelCode.find('#'));
+        std::printf("Connecting through %s\n", endpoint.c_str());
+        g_openAttempts = 400;   // a new trycloudflare name can take a while to resolve
+    }
     auto code = [](std::string value) { return [value] { return value; }; };
 
     {
@@ -230,6 +300,8 @@ int wmain(int argc, wchar_t *argv[])
     WaitForSingleObject(server.hProcess, 5000);
     CloseHandle(server.hProcess);
     CloseHandle(server.hThread);
+    if (outputRead)
+        CloseHandle(outputRead);
 
     std::printf("%s (%d failure%s)\n", g_failures ? "FAILED" : "PASSED", g_failures, g_failures == 1 ? "" : "s");
     return g_failures ? 1 : 0;

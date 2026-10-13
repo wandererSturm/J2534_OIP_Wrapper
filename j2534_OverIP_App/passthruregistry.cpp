@@ -30,7 +30,7 @@ const QStringList kProtocolFlags{QStringLiteral("CAN"), QStringLiteral("ISO15765
 
 bool isKnownInterface(const QString &name)
 {
-    return name == kCannelloni || name == kDllWrapper || name == kEmulator;
+    return name == kCannelloni || name == kDllWrapper || name == kEmulator || name == kRemote;
 }
 
 Config read(const QString &root)

@@ -30,6 +30,7 @@ public:
         quint16 port = 0;           // 0 = any free port
         QString secret;             // from the connection code
         QString adapterName;        // shown on the Diagnostic PC
+        bool requireApproval = false;   // ask (approvalRequested) before starting the host
     };
 
     explicit VehicleServer(QObject *parent = nullptr);
@@ -41,18 +42,33 @@ public:
     bool listening() const;
     quint16 port() const;
     bool hasClient() const { return m_authenticated; }
+    bool awaitingApproval() const { return m_awaitingApproval; }
     QString clientName() const { return m_clientName; }
+
+    // Answer to approvalRequested(). Ignored when nothing is waiting.
+    void approve();
+    void reject();
+
+    // ../../x86/j2534_device_host.exe relative to the installed App
+    // (dist/x64/bin next to dist/x86).
+    static QString defaultDeviceHostPath();
 
     // Random secret for a connection code, e.g. "K7P4-9QXM-2M8D".
     static QString generateSecret();
 
     static constexpr int kMaxSecretFailures = 3;
     static constexpr int kHostStartTimeoutMs = 15000;
+    // Below the Diagnostic PC's Hello timeout (120 s), so it gets a clear answer.
+    static constexpr int kApprovalTimeoutMs = 90000;
 
 signals:
+    void approvalRequested(const QString &name);
+    void approvalCancelled();
     void clientConnected(const QString &name);
     void clientDisconnected();
     void clientRefused(const QString &reason);
+    // kMaxSecretFailures wrong secrets: everyone is refused until start() again.
+    void lockedOut();
     void logMessage(const QString &text);
 
 private:
@@ -77,6 +93,8 @@ private:
     QPointer<QWebSocket> m_client;
     QString m_clientName;
     bool m_authenticated = false;
+    bool m_awaitingApproval = false;
+    QTimer m_approvalTimer;
     int m_secretFailures = 0;
 
     QLocalServer *m_pipeServer = nullptr;

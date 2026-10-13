@@ -11,6 +11,7 @@
 #include "exj2534cannelloni.h"
 #include "passthruregistry.h"
 #include "vehicleserver.h"
+#include "cloudflaredtunnel.h"
 
 #include <QCommandLineParser>
 #include <QDir>
@@ -18,7 +19,8 @@
 #include <cstdio>
 
 // --vehicle-server --driver <dll> [--device-host <exe>] [--port <n>]
-//                  [--secret <s>] [--adapter-name <name>]
+//                  [--secret <s>] [--adapter-name <name>] [--tunnel]
+// --tunnel also opens a trycloudflare quick tunnel and prints its code.
 static int runVehicleServer(const QStringList &arguments)
 {
     QCommandLineParser parser;
@@ -28,18 +30,18 @@ static int runVehicleServer(const QStringList &arguments)
     const QCommandLineOption portOption(QStringLiteral("port"), {}, QStringLiteral("port"), QStringLiteral("47534"));
     const QCommandLineOption secretOption(QStringLiteral("secret"), {}, QStringLiteral("secret"));
     const QCommandLineOption nameOption(QStringLiteral("adapter-name"), {}, QStringLiteral("name"));
-    parser.addOptions({serverOption, driverOption, hostOption, portOption, secretOption, nameOption});
+    const QCommandLineOption tunnelOption(QStringLiteral("tunnel"));
+    parser.addOptions({serverOption, driverOption, hostOption, portOption, secretOption, nameOption, tunnelOption});
     if (!parser.parse(arguments) || !parser.isSet(driverOption)) {
-        std::fprintf(stderr, "usage: --vehicle-server --driver <dll> [--device-host <exe>] [--port <n>] [--secret <s>]\n");
+        std::fprintf(stderr, "usage: --vehicle-server --driver <dll> [--device-host <exe>] [--port <n>] [--secret <s>] [--tunnel]\n");
         return 2;
     }
 
     VehicleServer::Options options;
     options.driverPath = parser.value(driverOption);
-    // Install layout: dist\x64\bin\<App> next to dist\x86\j2534_device_host.exe
     options.deviceHostPath = parser.isSet(hostOption)
         ? parser.value(hostOption)
-        : QDir::cleanPath(QCoreApplication::applicationDirPath() + QStringLiteral("/../../x86/j2534_device_host.exe"));
+        : VehicleServer::defaultDeviceHostPath();
     options.port = static_cast<quint16>(parser.value(portOption).toUInt());
     options.secret = parser.isSet(secretOption) ? parser.value(secretOption) : VehicleServer::generateSecret();
     options.adapterName = parser.isSet(nameOption) ? parser.value(nameOption) : QFileInfo(options.driverPath).baseName();
@@ -56,6 +58,24 @@ static int runVehicleServer(const QStringList &arguments)
     }
     std::fprintf(stdout, "Connection code (local): 127.0.0.1:%u#%s\n", server.port(), qPrintable(options.secret));
     std::fflush(stdout);
+
+    CloudflaredTunnel tunnel;
+    if (parser.isSet(tunnelOption)) {
+        QObject::connect(&tunnel, &CloudflaredTunnel::logMessage, [](const QString &text) {
+            std::fprintf(stdout, "%s\n", qPrintable(text));
+            std::fflush(stdout);
+        });
+        QObject::connect(&tunnel, &CloudflaredTunnel::stateChanged, [&] {
+            if (tunnel.state() == CloudflaredTunnel::State::Ready) {
+                std::fprintf(stdout, "Connection code: %s#%s\n",
+                             qPrintable(CloudflaredTunnel::shortName(tunnel.host())), qPrintable(options.secret));
+                std::fflush(stdout);
+            } else if (tunnel.state() == CloudflaredTunnel::State::Failed) {
+                QCoreApplication::exit(1);
+            }
+        });
+        tunnel.start(server.port());
+    }
     return QCoreApplication::exec();
 }
 

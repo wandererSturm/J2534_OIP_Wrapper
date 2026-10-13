@@ -5,6 +5,9 @@
 #include <QDir>
 #include <QFile>
 #include <QFileInfo>
+#include <QSettings>
+
+#include "connection_code.h"
 
 #include <windows.h>
 #include <shellapi.h>
@@ -15,6 +18,13 @@ QString quoted(const QString &arg)
 {
     return QLatin1Char('"') + arg + QLatin1Char('"');
 }
+
+QSettings userSettings()
+{
+    return QSettings(QStringLiteral("HKEY_CURRENT_USER\\Software\\Xplatforms\\J2534OverIP"), QSettings::NativeFormat);
+}
+
+const QString kRemoteConnectionKey = QStringLiteral("RemoteConnection");
 
 QString samePath(const QString &path)
 {
@@ -44,6 +54,7 @@ int InterfaceConfig::selectedModule() const
     if (m_selectedInterface.compare(PassThruRegistry::kDllWrapper, Qt::CaseInsensitive) == 0) return 2;
     if (m_selectedInterface.compare(PassThruRegistry::kEmulator, Qt::CaseInsensitive) == 0) return 3;
     if (m_selectedInterface.compare(PassThruRegistry::kCannelloni, Qt::CaseInsensitive) == 0) return 4;
+    if (m_selectedInterface.compare(PassThruRegistry::kRemote, Qt::CaseInsensitive) == 0) return 5;
     return 0;
 }
 
@@ -62,6 +73,7 @@ QString InterfaceConfig::displayName(const QString &interfaceName) const
     if (interfaceName == PassThruRegistry::kCannelloni) return QStringLiteral("Cannelloni (CAN over UDP)");
     if (interfaceName == PassThruRegistry::kDllWrapper) return QStringLiteral("DLL Wrapper");
     if (interfaceName == PassThruRegistry::kEmulator) return QStringLiteral("Emulator");
+    if (interfaceName == PassThruRegistry::kRemote) return QStringLiteral("Remote adapter (Vehicle PC)");
     return QStringLiteral("none");
 }
 
@@ -96,9 +108,64 @@ void InterfaceConfig::reload()
     m_registeredDll = config.functionLibrary;
     m_drivers = drivers;
 
+    const QString code = userSettings().value(kRemoteConnectionKey).toString();
+    if (code != m_remoteCode) {
+        m_remoteCode = code;
+        emit remoteCodeChanged();
+    }
+
     emit configChanged();
     if (selectionDiffers)
         emit selectionChanged();
+}
+
+QString InterfaceConfig::checkRemoteCode(const QString &code) const
+{
+    if (code.trimmed().isEmpty())
+        return QStringLiteral("Paste the connection code shown on the Vehicle PC.");
+    ConnectionCode parsed;
+    std::string error;
+    if (!ConnectionCode::parse(code.trimmed().toStdString(), parsed, &error))
+        return QString::fromStdString(error);
+    return {};
+}
+
+QString InterfaceConfig::remoteHost(const QString &code) const
+{
+    ConnectionCode parsed;
+    if (!ConnectionCode::parse(code.trimmed().toStdString(), parsed, nullptr))
+        return {};
+    return QString::fromStdString(parsed.displayHost());
+}
+
+bool InterfaceConfig::saveRemoteCode(const QString &code)
+{
+    if (!checkRemoteCode(code).isEmpty())
+        return false;
+    auto settings = userSettings();
+    settings.setValue(kRemoteConnectionKey, code.trimmed());
+    settings.sync();
+    if (settings.status() != QSettings::NoError)
+        return false;
+    m_remoteCode = code.trimmed();
+    emit remoteCodeChanged();
+    return true;
+}
+
+void InterfaceConfig::use(const QString &interfaceName, const QString &value)
+{
+    if (interfaceName == PassThruRegistry::kRemote) {
+        if (!saveRemoteCode(value)) {
+            const QString problem = checkRemoteCode(value);
+            emit applyFinished(false, problem.isEmpty() ? QStringLiteral("Couldn't save the connection code.") : problem);
+            return;
+        }
+        if (m_selectedInterface.compare(interfaceName, Qt::CaseInsensitive) == 0) {
+            emit applyFinished(true, QStringLiteral("Connection code saved. The diagnostic program uses it the next time it opens the device."));
+            return;
+        }
+    }
+    apply(interfaceName, interfaceName == PassThruRegistry::kDllWrapper ? value : QString());
 }
 
 void InterfaceConfig::apply(const QString &interfaceName, const QString &wrappedDll)

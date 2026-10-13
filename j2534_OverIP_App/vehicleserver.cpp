@@ -1,6 +1,7 @@
 #include "vehicleserver.h"
 
 #include <QCoreApplication>
+#include <QDir>
 #include <QFileInfo>
 #include <QHostAddress>
 #include <QLocalServer>
@@ -52,11 +53,27 @@ VehicleServer::VehicleServer(QObject *parent)
         if (!m_authenticated && m_client)
             refuse(m_client, HelloResult::Status::STATUS_REJECTED, QStringLiteral("The device host did not start."));
     });
+
+    m_approvalTimer.setSingleShot(true);
+    connect(&m_approvalTimer, &QTimer::timeout, this, [this] {
+        if (m_awaitingApproval && m_client) {
+            log(QStringLiteral("Nobody answered the request from %1").arg(m_clientName));
+            m_awaitingApproval = false;
+            emit approvalCancelled();
+            refuse(m_client, HelloResult::Status::STATUS_REJECTED,
+                   QStringLiteral("Nobody allowed the connection on the Vehicle PC."));
+        }
+    });
 }
 
 VehicleServer::~VehicleServer()
 {
     stop();
+}
+
+QString VehicleServer::defaultDeviceHostPath()
+{
+    return QDir::cleanPath(QCoreApplication::applicationDirPath() + QStringLiteral("/../../x86/j2534_device_host.exe"));
 }
 
 QString VehicleServer::generateSecret()
@@ -108,12 +125,18 @@ bool VehicleServer::start(const Options &options, QString *error)
 
 void VehicleServer::stop()
 {
-    stopHost();
-    if (m_client) {
-        m_client->abort();
-        m_client->deleteLater();
+    m_approvalTimer.stop();
+    if (m_awaitingApproval) {
+        m_awaitingApproval = false;
+        emit approvalCancelled();
     }
-    m_client = nullptr;
+    stopHost();
+    if (QWebSocket *client = m_client) {
+        // abort() emits disconnected() right away, which clears m_client.
+        m_client = nullptr;
+        client->abort();
+        client->deleteLater();
+    }
     m_authenticated = false;
     if (m_server) {
         m_server->close();
@@ -170,7 +193,7 @@ void VehicleServer::onClientMessage(const QByteArray &data)
         return;
 
     if (!m_authenticated) {
-        if (data[0] == kTagHello && !m_hostProcess)
+        if (data[0] == kTagHello && !m_hostProcess && !m_awaitingApproval)
             handleHello(data);
         return;   // nothing else before Hello is accepted
     }
@@ -217,12 +240,41 @@ void VehicleServer::handleHello(const QByteArray &data)
         log(QStringLiteral("Wrong connection code from %1 (%2 of %3)")
                 .arg(hello.clientName()).arg(m_secretFailures).arg(kMaxSecretFailures));
         refuse(m_client, HelloResult::Status::STATUS_BAD_SECRET, QString());
+        if (m_secretFailures == kMaxSecretFailures)
+            emit lockedOut();
         return;
     }
 
     m_clientName = hello.clientName().left(80);
+    if (m_options.requireApproval) {
+        log(QStringLiteral("%1 asks to use the adapter").arg(m_clientName));
+        m_awaitingApproval = true;
+        m_approvalTimer.start(kApprovalTimeoutMs);
+        emit approvalRequested(m_clientName);
+        return;
+    }
     log(QStringLiteral("%1 connected, starting the device host").arg(m_clientName));
     startHost();
+}
+
+void VehicleServer::approve()
+{
+    if (!m_awaitingApproval || !m_client)
+        return;
+    m_awaitingApproval = false;
+    m_approvalTimer.stop();
+    log(QStringLiteral("Allowed %1, starting the device host").arg(m_clientName));
+    startHost();
+}
+
+void VehicleServer::reject()
+{
+    if (!m_awaitingApproval || !m_client)
+        return;
+    m_awaitingApproval = false;
+    m_approvalTimer.stop();
+    log(QStringLiteral("Rejected %1").arg(m_clientName));
+    refuse(m_client, HelloResult::Status::STATUS_REJECTED, QStringLiteral("The Vehicle PC declined the connection."));
 }
 
 void VehicleServer::startHost()
@@ -261,6 +313,8 @@ void VehicleServer::stopHost()
         m_hostProcess = nullptr;
         process->disconnect(this);
         // Let it disconnect channels and close the device; kill only if stuck.
+        // Not our child any more, so destroying the server doesn't kill it.
+        process->setParent(nullptr);
         connect(process, &QProcess::finished, process, &QObject::deleteLater);
         QTimer::singleShot(5000, process, [process] {
             if (process->state() != QProcess::NotRunning)
@@ -381,6 +435,12 @@ void VehicleServer::onClientDisconnected()
     if (socket != m_client)
         return;
     const bool wasConnected = m_authenticated;
+    if (m_awaitingApproval) {
+        m_awaitingApproval = false;
+        m_approvalTimer.stop();
+        log(QStringLiteral("%1 gave up waiting").arg(m_clientName));
+        emit approvalCancelled();
+    }
     m_client = nullptr;
     m_authenticated = false;
     stopHost();

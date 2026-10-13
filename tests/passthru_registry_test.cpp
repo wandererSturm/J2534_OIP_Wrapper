@@ -29,7 +29,8 @@ QString writeFakeDll(const QTemporaryDir &dir, const QString &name, quint16 mach
 
     const QString path = dir.filePath(name);
     QFile file(path);
-    file.open(QFile::WriteOnly);
+    if (!file.open(QFile::WriteOnly))
+        return {};
     file.write(image);
     return path;
 }

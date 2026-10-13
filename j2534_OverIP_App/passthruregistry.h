@@ -23,6 +23,8 @@ inline const QString kDriverKeyName = QStringLiteral("XplatformsPassThruOverIP")
 inline const QString kCannelloni = QStringLiteral("J2534Cannelloni");
 inline const QString kDllWrapper = QStringLiteral("J2534DllWrapper");
 inline const QString kEmulator = QStringLiteral("J2534Emulator");
+// Diagnostic PC: the adapter is on a Vehicle PC (connection code in HKCU).
+inline const QString kRemote = QStringLiteral("J2534Remote");
 
 bool isKnownInterface(const QString &name);
 

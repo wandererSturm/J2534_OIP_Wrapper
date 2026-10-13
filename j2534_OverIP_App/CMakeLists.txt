@@ -11,6 +11,9 @@ qt_add_qml_module(j2534_OverIP_App
         MainPage.qml
         InterfacePage.qml
         InterfaceRow.qml
+        RoleBanner.qml
+        VehiclePage.qml
+        RemotePage.qml
         ExIconButton.qml
         J2534Emulator.qml
         J2534Wrapper.qml
@@ -39,7 +42,12 @@ qt_add_qml_module(j2534_OverIP_App
         pipecapture.cpp pipecapture.h
         passthruregistry.cpp passthruregistry.h
         interfaceconfig.cpp interfaceconfig.h
-        vehicleserver.cpp vehicleserver.h)
+        vehicleserver.cpp vehicleserver.h
+        cloudflaredtunnel.cpp cloudflaredtunnel.h
+        vehiclesharing.cpp vehiclesharing.h
+        # Same connection code parser as the DLL, to check pasted codes.
+        ${PROJECT_SOURCE_DIR}/j2534_remote_client/connection_code.cpp
+        ${PROJECT_SOURCE_DIR}/j2534_remote_client/connection_code.h)
 
 # Icons are referenced as qrc:/assets/... from QML, so keep them at the root prefix.
 qt_add_resources(j2534_OverIP_App "assets"
@@ -58,7 +66,9 @@ qt_add_resources(j2534_OverIP_App "assets"
         assets/settings_icon.png)
 
 # Only PassThruStruct.h is shared with the DLL; the App does not link it.
-target_include_directories(j2534_OverIP_App PRIVATE ${PROJECT_SOURCE_DIR}/j2534_OverIP)
+target_include_directories(j2534_OverIP_App PRIVATE
+    ${PROJECT_SOURCE_DIR}/j2534_OverIP
+    ${PROJECT_SOURCE_DIR}/j2534_remote_client)
 target_compile_definitions(j2534_OverIP_App PRIVATE QT_DISABLE_DEPRECATED_BEFORE=0x060000)
 target_link_libraries(j2534_OverIP_App PRIVATE
     j2534_pipe_qt
@@ -69,6 +79,17 @@ include(GNUInstallDirs)
 install(TARGETS j2534_OverIP_App
     BUNDLE DESTINATION .
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+
+# cloudflared next to the App (Vehicle PC), also in the build tree so the
+# App works when started from the IDE.
+include(Cloudflared)
+if(J2534_CLOUDFLARED_EXE)
+    add_custom_command(TARGET j2534_OverIP_App POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different "${J2534_CLOUDFLARED_EXE}" "$<TARGET_FILE_DIR:j2534_OverIP_App>/cloudflared.exe"
+        VERBATIM)
+    install(PROGRAMS "${J2534_CLOUDFLARED_EXE}" DESTINATION ${CMAKE_INSTALL_BINDIR})
+    install(FILES "${J2534_CLOUDFLARED_LICENSE}" DESTINATION ${CMAKE_INSTALL_BINDIR})
+endif()
 
 qt_generate_deploy_qml_app_script(
     TARGET j2534_OverIP_App

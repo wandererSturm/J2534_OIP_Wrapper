@@ -11,8 +11,9 @@ endforeach()
 add_test(NAME connection_code COMMAND connection_code_test)
 
 # Needs the x64 App (Vehicle mode); skipped when it isn't installed yet.
+# J2534_E2E_TUNNEL=1 runs it through a trycloudflare tunnel (internet, slower).
 set(J2534_E2E_APP "${PROJECT_SOURCE_DIR}/dist/x64/bin/j2534_OverIP_App.exe" CACHE FILEPATH
     "App used by remote_e2e_test")
 add_test(NAME remote_e2e
     COMMAND remote_e2e_test "${J2534_E2E_APP}" $<TARGET_FILE:j2534_device_host> $<TARGET_FILE:fake_j2534_driver>)
-set_tests_properties(remote_e2e PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 120)
+set_tests_properties(remote_e2e PROPERTIES SKIP_RETURN_CODE 77 TIMEOUT 300)
