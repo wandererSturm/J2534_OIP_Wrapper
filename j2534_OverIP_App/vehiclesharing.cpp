@@ -16,7 +16,7 @@ namespace {
 // Same per-user key the PassThru DLL reads RemoteConnection from.
 QSettings userSettings()
 {
-    return QSettings(QStringLiteral("HKEY_CURRENT_USER\\Software\\Xplatforms\\J2534OverIP"), QSettings::NativeFormat);
+    return QSettings(PassThruRegistry::kUserSettingsKey, QSettings::NativeFormat);
 }
 
 const QString kRoleKey = QStringLiteral("Role");

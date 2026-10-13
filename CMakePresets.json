@@ -41,6 +41,15 @@
         "CMAKE_PREFIX_PATH": "$env{QTDIR}",
         "J2534_BUILD_TESTS": "ON"
       }
+    },
+    {
+      "name": "release",
+      "displayName": "Release setup (x64 App + x86 DLL, Qt IFW installer)",
+      "inherits": "x64",
+      "cacheVariables": {
+        "J2534_BUILD_X86_SUBPROJECT": "ON",
+        "J2534_ARCH_DIR": "x64"
+      }
     }
   ],
   "buildPresets": [
@@ -63,6 +72,11 @@
       "name": "x64-debug",
       "configurePreset": "x64",
       "configuration": "Debug"
+    },
+    {
+      "name": "release",
+      "configurePreset": "release",
+      "configuration": "Release"
     }
   ],
   "testPresets": [
@@ -81,6 +95,51 @@
       "output": {
         "outputOnFailure": true
       }
+    },
+    {
+      "name": "release",
+      "configurePreset": "release",
+      "configuration": "Release",
+      "output": {
+        "outputOnFailure": true
+      }
+    }
+  ],
+  "packagePresets": [
+    {
+      "name": "release",
+      "configurePreset": "release",
+      "configurations": [
+        "Release"
+      ],
+      "generators": [
+        "IFW"
+      ],
+      "packageDirectory": "${sourceDir}/dist/setup"
+    }
+  ],
+  "workflowPresets": [
+    {
+      "name": "release",
+      "displayName": "Build x86 + x64, test, make the setup",
+      "steps": [
+        {
+          "type": "configure",
+          "name": "release"
+        },
+        {
+          "type": "build",
+          "name": "release"
+        },
+        {
+          "type": "test",
+          "name": "release"
+        },
+        {
+          "type": "package",
+          "name": "release"
+        }
+      ]
     }
   ]
 }

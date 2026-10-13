@@ -46,6 +46,25 @@ cmake --install build/x64 --config Release    # -> dist/x64/bin/j2534_OverIP_App
 
 Qt Creator can open the top-level `CMakeLists.txt` directly.
 
+### Installer
+The `release` workflow builds everything (the x64 App, plus the x86 DLL and device host as a subproject), runs the
+tests and creates a Qt Installer Framework setup with CPack. It needs [Qt IFW](https://doc.qt.io/qtinstallerframework/)
+4.x, found through `QTIFWDIR` or at `C:/Qt/Tools/QtInstallerFramework/4.11`:
+
+```sh
+set QTIFWDIR=C:/Qt/Tools/QtInstallerFramework/4.11
+cmake --workflow --preset release      # -> dist/setup/J2534OverIP-1.0-setup.exe
+```
+
+| Component | Contents |
+|-----------|----------|
+| J2534 Over IP App (always) | The App with the Qt and VC++ runtime, Start menu shortcut |
+| Diagnostic PC: PassThru driver | `j2534_OverIP.dll`, registered for diagnostic programs during setup |
+| Vehicle PC: share an adapter | `j2534_device_host.exe` and `cloudflared.exe` (Apache-2.0) |
+
+The setup installs to `Program Files\J2534OverIP` (with `x64\bin` and `x86` inside). Uninstalling, or removing the
+Diagnostic PC component, deletes the driver registration and the per-user settings.
+
 The DLL and the App exchange the messages defined in `proto/j2534_pipe.proto`: the DLL encodes them with
 [nanopb](https://github.com/nanopb/nanopb) (no Qt), the App decodes them with Qt Protobuf. The x64 preset also
 builds a round-trip test that checks both sides agree:

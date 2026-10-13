@@ -19,6 +19,6 @@ foreach(target j2534_device_host_core j2534_device_host)
     set_target_properties(${target} PROPERTIES MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 endforeach()
 
-install(TARGETS j2534_device_host RUNTIME DESTINATION .)
+install(TARGETS j2534_device_host RUNTIME DESTINATION ${J2534_ARCH_DIR} COMPONENT VehiclePC)
 
 add_subdirectory(tests)

@@ -130,6 +130,39 @@ private slots:
         QVERIFY(config.functionLibrary.isEmpty());   // no DLL given: not registered
     }
 
+    void registerOnlyKeepsSelection()
+    {
+        QString error;
+        QVERIFY(PassThruRegistry::apply({PassThruRegistry::kRemote, {}, {}, {}}, &error, kRoot0404));
+
+        // The installer: register (a new path) without choosing an interface.
+        QVERIFY2(PassThruRegistry::apply({{}, {}, "C:/Program Files/J2534OverIP/x86/j2534_OverIP.dll",
+                                          "C:/Program Files/J2534OverIP/x64/bin/j2534_OverIP_App.exe"}, &error, kRoot0404),
+                 qPrintable(error));
+        const auto config = PassThruRegistry::read(kRoot0404);
+        QCOMPARE(config.selectedInterface, PassThruRegistry::kRemote);
+        QCOMPARE(config.functionLibrary, QStringLiteral("C:\\Program Files\\J2534OverIP\\x86\\j2534_OverIP.dll"));
+
+        QVERIFY(!PassThruRegistry::apply({{}, {}, {}, {}}, &error, kRoot0404));
+        QVERIFY(error.contains("Nothing to do"));
+    }
+
+    void removeDeletesOnlyOurKey()
+    {
+        setDriver(kRoot0404, "OpenPort", "OpenPort 2.0", "C:\\Drivers\\op20pt32.dll");
+        QString error;
+        QVERIFY(PassThruRegistry::apply({PassThruRegistry::kEmulator, {}, "C:/dist/x86/j2534_OverIP.dll", {}}, &error, kRoot0404));
+
+        const QString resultFile = m_dir.filePath("remove.txt");
+        QCOMPARE(PassThruRegistry::runApplyFromArguments(
+                     {"app.exe", "--apply-config", "--remove", "--result-file", resultFile, "--root", kRoot0404}), 0);
+        QVERIFY(PassThruRegistry::read(kRoot0404).selectedInterface.isEmpty());
+        QVERIFY(PassThruRegistry::read(kRoot0404).functionLibrary.isEmpty());
+        QCOMPARE(PassThruRegistry::installedDrivers({kRoot0404}).size(), 1);   // other drivers stay
+
+        QVERIFY(PassThruRegistry::remove(&error, kRoot0404));   // already gone: fine
+    }
+
     void applyRejectsUnknownInterface()
     {
         QString error;

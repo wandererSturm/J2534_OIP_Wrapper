@@ -21,6 +21,10 @@ option(J2534_BUILD_DLL "Build the PassThru DLL" ON)
 option(J2534_BUILD_APP "Build the Qt configuration/monitor application" ON)
 option(J2534_BUILD_TESTS "Build the pipe protocol tests (needs Qt)" ${J2534_BUILD_APP})
 
+# Install subdirectory for this architecture: "." for dist/x86 and dist/x64,
+# "x86"/"x64" in the setup, where both builds share one install tree.
+set(J2534_ARCH_DIR "." CACHE STRING "Install subdirectory for this architecture")
+
 enable_testing()
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
@@ -46,6 +50,7 @@ endif()
 
 if(J2534_BUILD_APP)
     add_subdirectory(j2534_OverIP_App)
+    include(Packaging)
 endif()
 
 if(J2534_BUILD_TESTS)

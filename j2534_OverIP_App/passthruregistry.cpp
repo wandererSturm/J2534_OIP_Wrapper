@@ -126,7 +126,10 @@ bool apply(const ApplyRequest &request, QString *error, const QString &root)
         return false;
     };
 
-    if (!isKnownInterface(request.interfaceName))
+    const bool registerOnly = request.interfaceName.isEmpty();
+    if (registerOnly && request.functionLibrary.isEmpty())
+        return fail(QStringLiteral("Nothing to do: no interface and no DLL to register."));
+    if (!registerOnly && !isKnownInterface(request.interfaceName))
         return fail(QStringLiteral("Unknown interface \"%1\".").arg(request.interfaceName));
     if (request.interfaceName == kDllWrapper) {
         const QString problem = checkDriverArchitecture(request.wrappedDll);
@@ -135,7 +138,8 @@ bool apply(const ApplyRequest &request, QString *error, const QString &root)
     }
 
     QSettings s(driverKey(root), QSettings::NativeFormat);
-    s.setValue(QStringLiteral("ExSelectedInterface"), request.interfaceName);
+    if (!registerOnly)
+        s.setValue(QStringLiteral("ExSelectedInterface"), request.interfaceName);
     if (request.interfaceName == kDllWrapper)
         s.setValue(QStringLiteral("WrappedDll"), QDir::toNativeSeparators(request.wrappedDll));
 
@@ -155,6 +159,19 @@ bool apply(const ApplyRequest &request, QString *error, const QString &root)
     s.sync();
     if (s.status() != QSettings::NoError)
         return fail(QStringLiteral("Can't write %1. Administrator rights are required.").arg(driverKey(root)));
+    return true;
+}
+
+bool remove(QString *error, const QString &root)
+{
+    QSettings s(root, QSettings::NativeFormat);
+    s.remove(kDriverKeyName);
+    s.sync();
+    if (s.status() != QSettings::NoError) {
+        if (error)
+            *error = QStringLiteral("Can't delete %1. Administrator rights are required.").arg(driverKey(root));
+        return false;
+    }
     return true;
 }
 
@@ -194,12 +211,18 @@ int runApplyFromArguments(const QStringList &arguments)
     const QCommandLineOption appOption(QStringLiteral("config-application"), {}, QStringLiteral("path"));
     const QCommandLineOption resultOption(QStringLiteral("result-file"), {}, QStringLiteral("path"));
     const QCommandLineOption rootOption(QStringLiteral("root"), {}, QStringLiteral("key"));
-    parser.addOptions({applyOption, interfaceOption, wrappedOption, libraryOption, appOption, resultOption, rootOption});
+    const QCommandLineOption removeOption(QStringLiteral("remove"));
+    parser.addOptions({applyOption, interfaceOption, wrappedOption, libraryOption, appOption, resultOption, rootOption,
+                       removeOption});
 
     QString message;
     bool ok = false;
     if (!parser.parse(arguments)) {
         message = parser.errorText();
+    } else if (parser.isSet(removeOption)) {
+        ok = remove(&message, parser.isSet(rootOption) ? parser.value(rootOption) : kDefaultRoot);
+        if (ok && !parser.isSet(rootOption))
+            QSettings(kUserSettingsKey, QSettings::NativeFormat).remove(QString());
     } else {
         const ApplyRequest request{
             parser.value(interfaceOption),

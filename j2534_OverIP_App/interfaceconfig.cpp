@@ -21,7 +21,7 @@ QString quoted(const QString &arg)
 
 QSettings userSettings()
 {
-    return QSettings(QStringLiteral("HKEY_CURRENT_USER\\Software\\Xplatforms\\J2534OverIP"), QSettings::NativeFormat);
+    return QSettings(PassThruRegistry::kUserSettingsKey, QSettings::NativeFormat);
 }
 
 const QString kRemoteConnectionKey = QStringLiteral("RemoteConnection");

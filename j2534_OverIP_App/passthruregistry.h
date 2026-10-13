@@ -19,6 +19,8 @@ namespace PassThruRegistry
 inline const QString kDefaultRoot =
     QStringLiteral("HKEY_LOCAL_MACHINE\\SOFTWARE\\WOW6432Node\\PassThruSupport.04.04");
 inline const QString kDriverKeyName = QStringLiteral("XplatformsPassThruOverIP");
+// Per-user settings: RemoteConnection (read by the DLL), the App's role, ...
+inline const QString kUserSettingsKey = QStringLiteral("HKEY_CURRENT_USER\\Software\\Xplatforms\\J2534OverIP");
 
 inline const QString kCannelloni = QStringLiteral("J2534Cannelloni");
 inline const QString kDllWrapper = QStringLiteral("J2534DllWrapper");
@@ -64,14 +66,21 @@ struct ApplyRequest
 };
 
 // Validates and writes the request. Returns false and sets `error` on failure.
+// An empty interfaceName only registers functionLibrary (used by the installer)
+// and leaves the selected interface as it is.
 bool apply(const ApplyRequest &request, QString *error, const QString &root = kDefaultRoot);
+
+// Deletes our driver key (uninstall). Not finding it is not an error.
+bool remove(QString *error, const QString &root = kDefaultRoot);
 
 // `reg add` commands equivalent to apply(), for manual setup.
 QString manualCommands(const ApplyRequest &request);
 
 // Elevated helper mode: `--apply-config --interface <name> [--wrapped-dll <path>]
 // [--function-library <path>] [--config-application <path>] [--result-file <path>]
-// [--root <key>]`. Writes a message to the result file; returns the exit code.
+// [--root <key>]`, or `--apply-config --remove [--root <key>]` to unregister
+// (without --root it also deletes the per-user settings). Writes a message to
+// the result file; returns the exit code.
 int runApplyFromArguments(const QStringList &arguments);
 }
 

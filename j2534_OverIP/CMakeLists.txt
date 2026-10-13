@@ -39,4 +39,4 @@ target_link_libraries(j2534_OverIP PRIVATE j2534_pipe_builder_static_crt j2534_r
 set_target_properties(j2534_OverIP PROPERTIES
     MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
 
-install(TARGETS j2534_OverIP RUNTIME DESTINATION .)
+install(TARGETS j2534_OverIP RUNTIME DESTINATION ${J2534_ARCH_DIR} COMPONENT DiagnosticPC)
